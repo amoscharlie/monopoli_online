@@ -7,12 +7,20 @@ import Pusher from 'pusher-js';
 window.Chart = Chart;
 window.Pusher = Pusher;
 
+const sanitizeHost = (value) => String(value || '')
+    .trim()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/.*$/, '')
+    .split(':')[0];
+
+const resolvePublicHost = () => sanitizeHost(import.meta.env.VITE_PUBLIC_HOST) || window.location.hostname;
+
 window.createMonopolyEcho = () => {
     if (window.monopolyEcho) {
         return window.monopolyEcho;
     }
 
-    const host = import.meta.env.VITE_REVERB_HOST || window.location.hostname;
+    const host = sanitizeHost(import.meta.env.VITE_REVERB_HOST) || window.location.hostname;
     const scheme = import.meta.env.VITE_REVERB_SCHEME || window.location.protocol.replace(':', '') || 'http';
     const port = Number(import.meta.env.VITE_REVERB_PORT || 8080);
 
@@ -329,9 +337,7 @@ window.monopolyBank = () => ({
     },
 
     playerPortalUrl(token) {
-        const host = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-            ? '10.0.0.155'
-            : window.location.hostname;
+        const host = resolvePublicHost();
         const port = window.location.port ? `:${window.location.port}` : '';
 
         return `${window.location.protocol}//${host}${port}${this.basePath}/player/${token}`;
@@ -347,18 +353,14 @@ window.monopolyBank = () => ({
     },
 
     async copyBankUrl() {
-        const host = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-            ? '10.0.0.155'
-            : window.location.hostname;
+        const host = resolvePublicHost();
         const port = window.location.port ? `:${window.location.port}` : '';
 
         await this.copyText(`${window.location.protocol}//${host}${port}${this.basePath}/`);
     },
 
     liveViewUrl() {
-        const host = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-            ? '10.0.0.155'
-            : window.location.hostname;
+        const host = resolvePublicHost();
         const port = window.location.port ? `:${window.location.port}` : '';
 
         return `${window.location.protocol}//${host}${port}${this.basePath}/live/${this.current.game.id}`;
