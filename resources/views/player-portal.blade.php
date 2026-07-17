@@ -139,10 +139,21 @@
             </div>
         </section>
 
-        <section x-show="game?.status !== 'finished'" class="glass-card p-4">
+        <section x-show="game?.status !== 'finished'" x-data="{ manualOpen: false }" class="glass-card order-[90] p-4">
             <div class="mb-3 flex items-center justify-between">
-                <h2 class="text-lg font-black">Ajukan Transaksi</h2>
-                <span class="rounded-full px-3 py-1 text-xs font-black" :class="form.type === 'pay_rent' ? 'bg-emerald-300/15 text-emerald-200' : 'bg-amber-300/15 text-amber-200'" x-text="form.type === 'pay_rent' ? 'Bayar langsung' : 'Butuh persetujuan Bank'"></span>
+                <div>
+                    <p class="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Cadangan</p>
+                    <h2 class="text-lg font-black">Menu Manual / Override</h2>
+                    <p class="text-xs text-slate-400">Dipakai kalau aksi otomatis dari petak papan perlu dibantu manual.</p>
+                </div>
+                <button
+                    type="button"
+                    @click="manualOpen = !manualOpen"
+                    class="rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs font-black transition hover:bg-white/15"
+                >
+                    <span x-show="!manualOpen">Buka</span>
+                    <span x-show="manualOpen">Tutup</span>
+                </button>
             </div>
 
             <div x-show="player?.is_in_jail" class="mb-3 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-3">
@@ -155,7 +166,15 @@
                 <p x-show="player?.pending_jail_release" class="mt-2 text-sm font-black text-emerald-200">Sudah disetujui Bank. Bebas mulai giliran berikutnya.</p>
             </div>
 
-            <div class="space-y-3">
+            <div x-show="manualOpen" x-transition class="space-y-3">
+                <div class="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
+                    Transaksi utama sebaiknya lewat dadu dan popup posisi papan. Menu ini hanya untuk cadangan, koreksi, atau transaksi khusus yang belum otomatis.
+                </div>
+
+                <div class="flex justify-end">
+                    <span class="rounded-full px-3 py-1 text-xs font-black" :class="form.type === 'pay_rent' ? 'bg-emerald-300/15 text-emerald-200' : 'bg-amber-300/15 text-amber-200'" x-text="form.type === 'pay_rent' ? 'Bayar langsung' : 'Butuh persetujuan Bank'"></span>
+                </div>
+
                 <label class="block">
                     <span class="mb-1 block text-xs font-black uppercase tracking-[0.16em] text-slate-400">Aksi</span>
                     <select x-model="form.type" class="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-3 font-bold outline-none focus:border-emerald-300">

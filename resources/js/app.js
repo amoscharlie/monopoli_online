@@ -12,9 +12,7 @@ window.createMonopolyEcho = () => {
         return window.monopolyEcho;
     }
 
-    const host = ['localhost', '127.0.0.1'].includes(window.location.hostname)
-        ? '10.0.0.155'
-        : window.location.hostname;
+    const host = import.meta.env.VITE_REVERB_HOST || window.location.hostname;
     const scheme = import.meta.env.VITE_REVERB_SCHEME || window.location.protocol.replace(':', '') || 'http';
     const port = Number(import.meta.env.VITE_REVERB_PORT || 8080);
 
