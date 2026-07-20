@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\Game;
+use App\Models\GameCard;
+use App\Models\GameCardDraw;
 use App\Models\Property;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -378,37 +380,68 @@ class MonopolyBankTest extends TestCase
         $game = Game::query()->with('players', 'gameProperties.property')->findOrFail($gameId);
         $player = $game->players->first();
         $gameProperty = $game->gameProperties->first();
-        $property = $gameProperty->property;
 
         $this->postJson("/api/games/{$gameId}/transactions/buy-property", [
             'player_id' => $player->id,
             'game_property_id' => $gameProperty->id,
         ])->assertOk();
 
+        // Hotel boleh dibeli langsung jika properti belum punya rumah.
+        $this->postJson("/api/games/{$gameId}/transactions/add-hotel", [
+            'player_id' => $player->id,
+            'game_property_id' => $gameProperty->id,
+        ])->assertOk();
+
+        $this->assertDatabaseHas('game_properties', [
+            'id' => $gameProperty->id,
+            'house_count' => 0,
+            'has_hotel' => true,
+        ]);
+
+        // Kalau sudah punya hotel, tidak boleh tambah rumah.
+        $this->postJson("/api/games/{$gameId}/transactions/add-house", [
+            'player_id' => $player->id,
+            'game_property_id' => $gameProperty->id,
+        ])->assertUnprocessable();
+
+        // Jual hotel dulu, baru bisa pilih jalur rumah lagi.
+        $this->postJson("/api/games/{$gameId}/transactions/sell-hotel", [
+            'player_id' => $player->id,
+            'game_property_id' => $gameProperty->id,
+        ])->assertOk();
+
+        // Rumah harus dibeli berurutan sampai maksimal 4.
+        $this->postJson("/api/games/{$gameId}/transactions/sell-house", [
+            'player_id' => $player->id,
+            'game_property_id' => $gameProperty->id,
+        ])->assertUnprocessable();
+
         $this->postJson("/api/games/{$gameId}/transactions/add-house", [
             'player_id' => $player->id,
             'game_property_id' => $gameProperty->id,
         ])->assertOk();
 
-        $balanceAfterHouse = Game::query()->findOrFail($gameId)->transactions()
-            ->whereIn('type', ['buy_property', 'add_house'])
-            ->sum('amount');
-        $balanceAfterHouse = 500000 - $balanceAfterHouse;
-
-        $this->assertDatabaseHas('players', [
-            'id' => $player->id,
-            'balance' => $balanceAfterHouse,
-        ]);
+        // Selama masih ada rumah, tidak boleh langsung beli hotel.
+        $this->postJson("/api/games/{$gameId}/transactions/add-hotel", [
+            'player_id' => $player->id,
+            'game_property_id' => $gameProperty->id,
+        ])->assertUnprocessable();
 
         $this->postJson("/api/games/{$gameId}/transactions/sell-house", [
             'player_id' => $player->id,
             'game_property_id' => $gameProperty->id,
         ])->assertOk();
 
-        $this->assertDatabaseHas('players', [
-            'id' => $player->id,
-            'balance' => $balanceAfterHouse + intdiv($property->house_price, 2),
-        ]);
+        // Setelah rumah habis dijual, hotel bisa dibeli lagi.
+        $this->postJson("/api/games/{$gameId}/transactions/add-hotel", [
+            'player_id' => $player->id,
+            'game_property_id' => $gameProperty->id,
+        ])->assertOk();
+
+        $this->postJson("/api/games/{$gameId}/transactions/sell-hotel", [
+            'player_id' => $player->id,
+            'game_property_id' => $gameProperty->id,
+        ])->assertOk();
 
         for ($i = 0; $i < 4; $i++) {
             $this->postJson("/api/games/{$gameId}/transactions/add-house", [
@@ -421,32 +454,42 @@ class MonopolyBankTest extends TestCase
             'player_id' => $player->id,
             'game_property_id' => $gameProperty->id,
         ])->assertUnprocessable();
+    }
 
-        $this->postJson("/api/games/{$gameId}/transactions/add-hotel", [
+    public function test_transport_and_utility_cannot_buy_house_or_hotel(): void
+    {
+        $this->seed();
+        $gameId = $this->createGame(500000);
+        $game = Game::query()->with('players', 'gameProperties.property')->findOrFail($gameId);
+        $player = $game->players->first();
+        $utility = $game->gameProperties->first(fn ($item) => $item->property->property_kind === 'utility');
+        $transport = $game->gameProperties->first(fn ($item) => $item->property->property_kind === 'transport');
+
+        $this->postJson("/api/games/{$gameId}/transactions/buy-property", [
             'player_id' => $player->id,
-            'game_property_id' => $gameProperty->id,
+            'game_property_id' => $utility->id,
+        ])->assertOk();
+        $this->postJson("/api/games/{$gameId}/transactions/buy-property", [
+            'player_id' => $player->id,
+            'game_property_id' => $transport->id,
         ])->assertOk();
 
-        $this->assertDatabaseHas('game_properties', [
-            'id' => $gameProperty->id,
-            'house_count' => 0,
-            'has_hotel' => true,
-        ]);
-
-        $this->postJson("/api/games/{$gameId}/transactions/add-hotel", [
+        $this->postJson("/api/games/{$gameId}/transactions/add-house", [
             'player_id' => $player->id,
-            'game_property_id' => $gameProperty->id,
+            'game_property_id' => $utility->id,
         ])->assertUnprocessable();
-
-        $this->postJson("/api/games/{$gameId}/transactions/sell-hotel", [
+        $this->postJson("/api/games/{$gameId}/transactions/add-hotel", [
             'player_id' => $player->id,
-            'game_property_id' => $gameProperty->id,
-        ])->assertOk();
-
-        $this->assertDatabaseHas('game_properties', [
-            'id' => $gameProperty->id,
-            'has_hotel' => false,
-        ]);
+            'game_property_id' => $utility->id,
+        ])->assertUnprocessable();
+        $this->postJson("/api/games/{$gameId}/transactions/add-house", [
+            'player_id' => $player->id,
+            'game_property_id' => $transport->id,
+        ])->assertUnprocessable();
+        $this->postJson("/api/games/{$gameId}/transactions/add-hotel", [
+            'player_id' => $player->id,
+            'game_property_id' => $transport->id,
+        ])->assertUnprocessable();
     }
 
     public function test_player_portal_can_request_property_purchase_for_admin_approval(): void
@@ -491,6 +534,64 @@ class MonopolyBankTest extends TestCase
             'type' => 'buy_property',
             'from_player_id' => $amos->id,
             'game_property_id' => $gameProperty->id,
+        ]);
+    }
+
+    public function test_player_portal_can_submit_bulk_sell_assets_request_and_bank_approves_once(): void
+    {
+        $this->seed();
+        $gameId = $this->createGame(200000);
+        $game = Game::query()->with('players', 'gameProperties.property', 'playerAccessTokens')->findOrFail($gameId);
+        $amos = $game->players->firstWhere('name', 'Amos');
+        $token = $game->playerAccessTokens->firstWhere('player_id', $amos->id);
+        $property = $game->gameProperties->first();
+
+        $this->postJson("/api/games/{$gameId}/transactions/buy-property", [
+            'player_id' => $amos->id,
+            'game_property_id' => $property->id,
+        ])->assertOk();
+
+        $this->postJson("/api/games/{$gameId}/transactions/add-house", [
+            'player_id' => $amos->id,
+            'game_property_id' => $property->id,
+        ])->assertOk();
+
+        $requestId = $this->postJson("/api/player/{$token->token}/requests", [
+            'type' => 'bulk_sell_assets',
+            'bulk_total' => intdiv($property->property->house_price, 2) + intdiv($property->property->price, 2),
+            'liquidation_plan' => [
+                ['type' => 'sell_house', 'game_property_id' => $property->id, 'quantity' => 1],
+                ['type' => 'sell_property', 'game_property_id' => $property->id, 'quantity' => 1],
+            ],
+        ])
+            ->assertCreated()
+            ->json('request_id');
+
+        $this->postJson("/api/games/{$gameId}/requests/{$requestId}/approve")
+            ->assertOk();
+
+        $this->assertDatabaseHas('transaction_requests', [
+            'id' => $requestId,
+            'status' => 'approved',
+            'amount' => intdiv($property->property->house_price, 2) + intdiv($property->property->price, 2),
+        ]);
+        $this->assertDatabaseHas('transactions', [
+            'game_id' => $gameId,
+            'type' => 'sell_house',
+            'to_player_id' => $amos->id,
+            'game_property_id' => $property->id,
+        ]);
+        $this->assertDatabaseHas('transactions', [
+            'game_id' => $gameId,
+            'type' => 'sell_property',
+            'to_player_id' => $amos->id,
+            'game_property_id' => $property->id,
+        ]);
+        $this->assertDatabaseHas('game_properties', [
+            'id' => $property->id,
+            'owner_id' => null,
+            'house_count' => 0,
+            'has_hotel' => false,
         ]);
     }
 
@@ -551,6 +652,190 @@ class MonopolyBankTest extends TestCase
             'amount' => $rent,
         ]);
         $this->assertDatabaseCount('transaction_requests', 0);
+    }
+
+    public function test_player_portal_can_skip_stale_receive_card_action(): void
+    {
+        $this->seed();
+        $gameId = $this->createGame(50000);
+        $game = Game::query()->with('players', 'playerAccessTokens')->findOrFail($gameId);
+        $amos = $game->players->firstWhere('name', 'Amos');
+        $token = $game->playerAccessTokens->firstWhere('player_id', $amos->id);
+
+        $amos->update([
+            'pending_space_action' => [
+                'action' => 'card_receive',
+                'label' => 'Dana Umum: Dapat Sisa Uang Pajak Jalan',
+                'message' => 'Dapat sisa uang pajak jalan 5000.',
+                'amount' => 5000,
+                'requires_resolution' => false,
+                'auto_resolved' => true,
+            ],
+        ]);
+
+        $this->postJson("/api/player/{$token->token}/space-action", [
+            'decision' => 'skip',
+            'source' => 'bank',
+        ])->assertOk();
+
+        $this->assertDatabaseHas('players', [
+            'id' => $amos->id,
+            'pending_space_action' => null,
+        ]);
+    }
+
+    public function test_repair_card_without_assets_is_auto_resolved(): void
+    {
+        $this->seed();
+        $gameId = $this->createGame(50000);
+        $game = Game::query()->with('players', 'playerAccessTokens')->findOrFail($gameId);
+        $amos = $game->players->firstWhere('name', 'Amos');
+        $token = $game->playerAccessTokens->firstWhere('player_id', $amos->id);
+        $card = GameCard::query()->where('effect_type', 'repair_assets')->firstOrFail();
+
+        $draw = GameCardDraw::query()->create([
+            'game_id' => $gameId,
+            'game_card_id' => $card->id,
+            'player_id' => $amos->id,
+            'deck' => $card->deck,
+            'status' => 'drawn',
+            'snapshot' => [
+                'key' => $card->key,
+                'title' => $card->title,
+                'effect_type' => $card->effect_type,
+            ],
+        ]);
+
+        $amos->update([
+            'pending_space_action' => [
+                'action' => 'card_repair_assets',
+                'card_draw_id' => $draw->id,
+                'label' => "{$card->deck}: {$card->title}",
+                'message' => $card->description,
+                'amount' => 0,
+                'requires_resolution' => true,
+            ],
+        ]);
+
+        $this->postJson("/api/player/{$token->token}/space-action", [
+            'decision' => 'pay',
+            'source' => 'bank',
+        ])->assertOk();
+
+        $draw->refresh();
+        $amos->refresh();
+
+        $this->assertSame('resolved', $draw->status);
+        $this->assertNull($amos->pending_space_action);
+        $this->assertDatabaseHas('transactions', [
+            'game_id' => $gameId,
+            'type' => 'card_no_payment',
+            'to_player_id' => $amos->id,
+        ]);
+    }
+
+    public function test_move_card_creates_follow_up_space_action(): void
+    {
+        $this->seed();
+        $forceCardDraw = function (int $gameId, int $playerId, string $targetKey): void {
+            $targetCard = GameCard::query()->where('key', $targetKey)->firstOrFail();
+            $otherCards = GameCard::query()
+                ->where('deck', $targetCard->deck)
+                ->where('key', '!=', $targetKey)
+                ->get();
+
+            foreach ($otherCards as $otherCard) {
+                GameCardDraw::query()->create([
+                    'game_id' => $gameId,
+                    'game_card_id' => $otherCard->id,
+                    'player_id' => $playerId,
+                    'deck' => $otherCard->deck,
+                    'status' => 'resolved',
+                    'snapshot' => [
+                        'key' => $otherCard->key,
+                        'title' => $otherCard->title,
+                    ],
+                    'resolved_at' => now(),
+                ]);
+            }
+        };
+
+        $gameIdRent = $this->createGame(50000);
+        $gameRent = Game::query()->with('players', 'gameProperties.property')->findOrFail($gameIdRent);
+        $amosRent = $gameRent->players->firstWhere('name', 'Amos');
+        $budiRent = $gameRent->players->firstWhere('name', 'Budi');
+        $mesir = $gameRent->gameProperties->first(fn ($item) => str_contains(strtolower($item->property->name), 'mesir'));
+
+        $this->postJson("/api/games/{$gameIdRent}/transactions/buy-property", [
+            'player_id' => $budiRent->id,
+            'game_property_id' => $mesir->id,
+        ])->assertOk();
+
+        $forceCardDraw($gameIdRent, $amosRent->id, 'kesempatan_maju_mesir');
+        $this->postJson("/api/games/{$gameIdRent}/cards/draw", [
+            'player_id' => $amosRent->id,
+            'deck' => 'Kesempatan',
+        ])->assertOk();
+
+        $this->assertDatabaseHas('players', [
+            'id' => $amosRent->id,
+            'pending_space_action->action' => 'pay_rent',
+            'pending_space_action->game_property_id' => $mesir->id,
+        ]);
+
+        $gameIdBuy = $this->createGame(50000);
+        $gameBuy = Game::query()->with('players', 'gameProperties.property')->findOrFail($gameIdBuy);
+        $amosBuy = $gameBuy->players->firstWhere('name', 'Amos');
+        $indonesia = $gameBuy->gameProperties->first(fn ($item) => str_contains(strtolower($item->property->name), 'indonesia'));
+
+        $forceCardDraw($gameIdBuy, $amosBuy->id, 'kesempatan_kembali_indonesia');
+        $this->postJson("/api/games/{$gameIdBuy}/cards/draw", [
+            'player_id' => $amosBuy->id,
+            'deck' => 'Kesempatan',
+        ])->assertOk();
+
+        $this->assertDatabaseHas('players', [
+            'id' => $amosBuy->id,
+            'pending_space_action->action' => 'buy_property',
+            'pending_space_action->game_property_id' => $indonesia->id,
+        ]);
+    }
+
+    public function test_draw_card_still_works_when_deck_exhausted(): void
+    {
+        $this->seed();
+        $gameId = $this->createGame(50000);
+        $game = Game::query()->with('players')->findOrFail($gameId);
+        $amos = $game->players->firstWhere('name', 'Amos');
+        $budi = $game->players->firstWhere('name', 'Budi');
+        $cards = GameCard::query()->where('deck', 'Dana Umum')->where('is_active', true)->get();
+
+        foreach ($cards as $card) {
+            GameCardDraw::query()->create([
+                'game_id' => $gameId,
+                'game_card_id' => $card->id,
+                'player_id' => $amos->id,
+                'deck' => 'Dana Umum',
+                'status' => 'held',
+                'snapshot' => ['key' => $card->key, 'title' => $card->title],
+                'resolved_at' => now(),
+            ]);
+        }
+
+        $this->postJson("/api/games/{$gameId}/cards/draw", [
+            'player_id' => $budi->id,
+            'deck' => 'Dana Umum',
+        ])->assertOk();
+
+        $this->assertDatabaseHas('transactions', [
+            'game_id' => $gameId,
+            'type' => 'card_deck_reshuffled',
+        ]);
+        $this->assertDatabaseHas('transactions', [
+            'game_id' => $gameId,
+            'type' => 'card_draw',
+            'to_player_id' => $budi->id,
+        ]);
     }
 
     public function test_utility_rent_uses_payer_full_group_count(): void

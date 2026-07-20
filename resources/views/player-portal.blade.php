@@ -245,6 +245,9 @@
                             <div class="rounded-xl bg-slate-950/40 p-2 text-xs">
                                 <p class="font-black text-slate-100" x-text="`Pilihan ${index + 1}: ${money(plan.total)} terkumpul`"></p>
                                 <p class="text-slate-300" x-text="plan.items.join(' + ')"></p>
+                                <button @click="submitBulkSellPlan(plan)" :disabled="submitInFlight || hasPendingType('bulk_sell_assets')" class="mt-2 rounded-lg bg-amber-300 px-2.5 py-1.5 text-[11px] font-black text-slate-950 disabled:opacity-50">
+                                    Ajukan paket ini ke Bank
+                                </button>
                             </div>
                         </template>
                         <p x-show="saleRecommendations().length === 0" class="text-xs text-slate-400">Belum ada aset yang cukup untuk menutup kekurangan.</p>
@@ -276,6 +279,13 @@
                 <p class="text-xs font-black uppercase tracking-[0.16em] text-blue-300" x-text="spaceAction()?.label"></p>
                 <h3 class="mt-1 text-xl font-black" x-text="spaceAction()?.space_name"></h3>
                 <p class="mt-1 text-sm text-slate-300" x-text="spaceAction()?.message"></p>
+                <div x-show="spaceAction()?.action === 'own_property'" class="mt-3 rounded-2xl border border-white/10 bg-slate-950/40 p-3 text-xs text-slate-300">
+                    <p class="font-black text-slate-100">Detail properti milikmu</p>
+                    <p class="mt-1">Rumah saat ini: <b x-text="spaceAction()?.house_count || 0"></b> / 4 · Hotel: <b x-text="spaceAction()?.has_hotel ? 1 : 0"></b></p>
+                    <p class="mt-1">Harga beli rumah: <b x-text="money(spaceAction()?.house_price)"></b> · Harga beli hotel: <b x-text="money(spaceAction()?.hotel_price)"></b></p>
+                    <p class="mt-1">Harga jual 1 rumah (1/2): <b x-text="money(spaceAction()?.sell_house_value)"></b> · Harga jual hotel (1/2): <b x-text="money(spaceAction()?.sell_hotel_value)"></b></p>
+                    <p class="mt-1">Harga jual tanah (1/2): <b x-text="money(spaceAction()?.sell_property_value)"></b></p>
+                </div>
                 <div x-show="spaceAction()?.card" class="mt-3 rounded-3xl border p-4" :class="spaceAction()?.card?.deck === 'Dana Umum' ? 'border-emerald-300/30 bg-emerald-300/10' : 'border-rose-300/30 bg-rose-300/10'">
                     <p class="text-xs font-black uppercase tracking-[0.18em]" :class="spaceAction()?.card?.deck === 'Dana Umum' ? 'text-emerald-200' : 'text-rose-200'" x-text="spaceAction()?.card?.deck"></p>
                     <h4 class="mt-1 text-2xl font-black" x-text="spaceAction()?.card?.title"></h4>
@@ -299,14 +309,21 @@
                             <div class="rounded-xl bg-slate-950/40 p-2 text-xs">
                                 <p class="font-black text-slate-100" x-text="`Pilihan ${index + 1}: ${money(plan.total)} terkumpul`"></p>
                                 <p class="text-slate-300" x-text="plan.items.join(' + ')"></p>
+                                <button @click="submitBulkSellPlan(plan)" :disabled="submitInFlight || hasPendingType('bulk_sell_assets')" class="mt-2 rounded-lg bg-amber-300 px-2.5 py-1.5 text-[11px] font-black text-slate-950 disabled:opacity-50">
+                                    Ajukan paket ini ke Bank
+                                </button>
                             </div>
                         </template>
                         <p x-show="actionSaleRecommendations().length === 0" class="text-xs text-slate-400">Kalau semua aset tetap kurang, pemain harus bangkrut.</p>
                     </div>
                 </div>
 
-                <div class="mt-4 grid gap-2" :class="spaceAction()?.action === 'buy_property' || spaceAction()?.action === 'card_choice_pay_or_draw' ? 'grid-cols-3' : 'grid-cols-2'">
+                <div class="mt-4 grid gap-2" :class="['buy_property','own_property','card_choice_pay_or_draw'].includes(spaceAction()?.action) ? 'grid-cols-3' : 'grid-cols-2'">
                     <button x-show="spaceAction()?.action === 'buy_property'" @click="resolveSpaceAction('buy')" :disabled="submitInFlight" class="rounded-xl bg-emerald-400 px-3 py-3 text-sm font-black text-slate-950 disabled:opacity-50">Beli</button>
+                    <button x-show="spaceAction()?.action === 'own_property'" @click="resolveSpaceAction('add_house')" :disabled="submitInFlight || !spaceAction()?.can_buy_house" class="rounded-xl bg-emerald-400 px-3 py-3 text-sm font-black text-slate-950 disabled:opacity-50">Beli Rumah</button>
+                    <button x-show="spaceAction()?.action === 'own_property'" @click="resolveSpaceAction('add_hotel')" :disabled="submitInFlight || !spaceAction()?.can_buy_hotel" class="rounded-xl bg-purple-400 px-3 py-3 text-sm font-black text-white disabled:opacity-50">Beli Hotel</button>
+                    <button x-show="spaceAction()?.action === 'own_property'" @click="resolveSpaceAction('sell_house')" :disabled="submitInFlight || !spaceAction()?.can_sell_house" class="rounded-xl bg-amber-300 px-3 py-3 text-sm font-black text-slate-950 disabled:opacity-50">Jual 1 Rumah (1/2)</button>
+                    <button x-show="spaceAction()?.action === 'own_property'" @click="resolveSpaceAction('sell_hotel')" :disabled="submitInFlight || !spaceAction()?.can_sell_hotel" class="rounded-xl bg-amber-300 px-3 py-3 text-sm font-black text-slate-950 disabled:opacity-50">Jual Hotel (1/2)</button>
                     <button x-show="['pay_tax','pay_special_tax','pay_rent','card_pay_bank','card_repair_assets','card_utility_rent','card_collect_players','card_choice_pay_or_draw'].includes(spaceAction()?.action)" @click="resolveSpaceAction('pay')" :disabled="submitInFlight" class="rounded-xl bg-rose-400 px-3 py-3 text-sm font-black text-white disabled:opacity-50">Bayar</button>
                     <button x-show="spaceAction()?.action === 'card_choice_pay_or_draw'" @click="resolveSpaceAction('draw_chance')" :disabled="submitInFlight" class="rounded-xl bg-rose-400 px-3 py-3 text-sm font-black text-white disabled:opacity-50">Ambil Kesempatan</button>
                     <button x-show="!['pay_tax','pay_special_tax','pay_rent','card_pay_bank','card_repair_assets','card_utility_rent','card_collect_players','card_choice_pay_or_draw'].includes(spaceAction()?.action)" @click="resolveSpaceAction('skip')" :disabled="submitInFlight" class="rounded-xl bg-white/10 px-3 py-3 text-sm font-black disabled:opacity-50" x-text="spaceAction()?.action === 'buy_property' ? 'Lewati' : 'Selesai'"></button>
@@ -658,6 +675,39 @@
             hasPendingType(type) {
                 return this.requests.some((request) => request.status === 'pending' && request.type === type);
             },
+            async submitBulkSellPlan(plan) {
+                if (!plan?.operations?.length || this.submitInFlight || this.hasPendingType('bulk_sell_assets')) {
+                    return;
+                }
+
+                const confirmed = confirm(`Ajukan paket jual aset ke Bank?\nTotal target ${this.money(plan.total)}\n${plan.items.join('\n')}`);
+                if (!confirmed) {
+                    return;
+                }
+
+                this.submitInFlight = true;
+                try {
+                    const response = await fetch(`${this.basePath()}/api/player/${this.token}/requests`, {
+                        method: 'POST',
+                        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            type: 'bulk_sell_assets',
+                            bulk_total: plan.total,
+                            liquidation_plan: plan.operations,
+                            reason: `Paket jual aset ${this.money(plan.total)}`,
+                        }),
+                    });
+                    const payload = await response.json();
+                    if (!response.ok) {
+                        alert(payload.message || 'Paket jual aset belum bisa dikirim.');
+                        return;
+                    }
+                    alert(payload.message);
+                    await this.fetchState(true);
+                } finally {
+                    this.submitInFlight = false;
+                }
+            },
             async requestJailAction(type) {
                 if (this.submitInFlight || this.hasPendingType(type)) {
                     return;
@@ -695,7 +745,7 @@
                     return;
                 }
 
-                const needsConfirm = ['pay_tax','pay_special_tax','pay_rent','buy_property'].includes(action.action);
+                const needsConfirm = ['pay_tax','pay_special_tax','pay_rent','buy_property','own_property'].includes(action.action);
                 if (needsConfirm && !confirm(`${action.label}: ${action.amount ? this.money(action.amount) : ''}\nLanjutkan?`)) {
                     return;
                 }
@@ -812,12 +862,26 @@
                 const assets = (this.player?.properties || []).flatMap((property) => {
                     const items = [];
                     if (property.house_count > 0 && !property.has_hotel) {
-                        items.push({ label: `jual 1 rumah di ${property.name}`, value: Math.floor((property.house_price || 0) / 2) });
+                        for (let i = 0; i < Number(property.house_count || 0); i += 1) {
+                            items.push({
+                                label: `jual 1 rumah di ${property.name}`,
+                                value: Math.floor((property.house_price || 0) / 2),
+                                operation: { type: 'sell_house', game_property_id: property.id, quantity: 1 },
+                            });
+                        }
                     }
                     if (property.has_hotel) {
-                        items.push({ label: `jual hotel di ${property.name}`, value: Math.floor((property.hotel_price || 0) / 2) });
+                        items.push({
+                            label: `jual hotel di ${property.name}`,
+                            value: Math.floor((property.hotel_price || 0) / 2),
+                            operation: { type: 'sell_hotel', game_property_id: property.id, quantity: 1 },
+                        });
                     }
-                    items.push({ label: `jual tanah ${property.name}`, value: Math.floor((property.price || 0) / 2) });
+                    items.push({
+                        label: `jual tanah ${property.name}`,
+                        value: Math.floor((property.price || 0) / 2),
+                        operation: { type: 'sell_property', game_property_id: property.id, quantity: 1 },
+                    });
                     return items;
                 }).filter((item) => item.value > 0);
 
@@ -828,18 +892,20 @@
 
                 const buildPlan = (list) => {
                     const items = [];
+                    const operations = [];
                     let total = 0;
                     for (const asset of list) {
                         items.push(asset.label);
+                        operations.push(asset.operation);
                         total += asset.value;
                         if (total >= shortage) break;
                     }
-                    return total >= shortage ? { items, total } : null;
+                    return total >= shortage ? { items, total, operations } : null;
                 };
 
                 const smallPlan = buildPlan(sortedSmall);
                 if (smallPlan) plans.push(smallPlan);
-                if (single) plans.push({ items: [single.label], total: single.value });
+                if (single) plans.push({ items: [single.label], total: single.value, operations: [single.operation] });
                 const largePlan = buildPlan(sortedLarge);
                 if (largePlan) plans.push(largePlan);
 

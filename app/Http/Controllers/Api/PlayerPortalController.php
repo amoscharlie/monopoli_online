@@ -59,13 +59,18 @@ class PlayerPortalController extends Controller
     {
         $accessToken = $this->accessToken($token);
         $data = $request->validate([
-            'type' => ['required', 'string', 'in:transfer,player_to_bank,bank_to_player,deposit,withdraw,buy_property,sell_property,add_house,sell_house,add_hotel,sell_hotel,pay_jail_fee,use_jail_card'],
+            'type' => ['required', 'string', 'in:transfer,player_to_bank,bank_to_player,deposit,withdraw,buy_property,sell_property,add_house,sell_house,add_hotel,sell_hotel,pay_jail_fee,use_jail_card,bulk_sell_assets'],
             'target_player_id' => ['nullable', 'integer'],
             'game_property_id' => ['nullable', 'integer'],
             'amount' => ['nullable', 'integer', 'min:1'],
             'source' => ['nullable', 'string', 'in:bank,cash'],
             'reason' => ['nullable', 'string', 'max:160'],
             'owner_id' => ['nullable', 'integer'],
+            'bulk_total' => ['nullable', 'integer', 'min:0'],
+            'liquidation_plan' => ['nullable', 'array'],
+            'liquidation_plan.*.type' => ['nullable', 'string', 'in:sell_property,sell_house,sell_hotel'],
+            'liquidation_plan.*.game_property_id' => ['nullable', 'integer'],
+            'liquidation_plan.*.quantity' => ['nullable', 'integer', 'min:1'],
         ]);
 
         $transactionRequest = $this->bank->submitPlayerRequest($accessToken, $data);
@@ -132,7 +137,7 @@ class PlayerPortalController extends Controller
     {
         $accessToken = $this->accessToken($token);
         $data = $request->validate([
-            'decision' => ['required', 'string', 'in:buy,pay,skip,draw_chance'],
+            'decision' => ['required', 'string', 'in:buy,pay,skip,draw_chance,add_house,add_hotel,sell_house,sell_hotel'],
             'source' => ['nullable', 'string', 'in:bank,cash'],
         ]);
 

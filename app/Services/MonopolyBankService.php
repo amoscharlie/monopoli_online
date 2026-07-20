@@ -861,7 +861,7 @@ class MonopolyBankService
             'type' => $type,
             'target_player_id' => $target?->id,
             'game_property_id' => $property?->id,
-            'amount' => $payload['amount'] ?? null,
+            'amount' => $this->requestAmount($type, $payload),
             'source' => $payload['source'] ?? null,
             'reason' => $payload['reason'] ?? $description,
             'payload' => $payload,
@@ -894,6 +894,7 @@ class MonopolyBankService
                 'sell_house' => $this->sellHouse($game, $request->player_id, (int) $request->game_property_id),
                 'add_hotel' => $this->addHotel($game, $request->player_id, (int) $request->game_property_id),
                 'sell_hotel' => $this->sellHotel($game, $request->player_id, (int) $request->game_property_id),
+                'bulk_sell_assets' => $this->approveBulkSellAssetsRequest($game, $request->player_id, $payload),
                 'pay_rent' => $this->payRent($game, $request->player_id, (int) $request->game_property_id, $request->source ?: 'bank'),
                 'pay_jail_fee' => $this->payJailFee($game, $request->player_id),
                 'use_jail_card' => $this->useJailCard($game, $request->player_id),
@@ -1197,15 +1198,16 @@ class MonopolyBankService
             $transaction = null;
 
             if ($decision === 'skip') {
-                if (str_starts_with($type, 'card_') || in_array($type, ['pay_tax', 'pay_special_tax', 'pay_rent'], true)) {
+                if ($this->skipRequiresPaymentResolution($type, $action)) {
                     throw ValidationException::withMessages(['board' => 'Aksi bayar tidak bisa dilewati. Selesaikan pembayaran dulu.']);
                 }
 
                 $player->update(['pending_space_action' => null]);
+                $actionLabel = $action['space_name'] ?? $action['label'] ?? 'aksi kartu';
                 $this->record($game, [
                     'type' => 'space_skipped',
                     'to_player_id' => $player->id,
-                    'description' => "{$player->name} melewati aksi {$action['space_name']}",
+                    'description' => "{$player->name} melewati aksi {$actionLabel}",
                     'meta' => ['space_action' => $action],
                 ]);
                 return null;
@@ -1213,6 +1215,14 @@ class MonopolyBankService
 
             if ($type === 'buy_property' && $decision === 'buy') {
                 $transaction = $this->buyProperty($game, $player->id, (int) $action['game_property_id']);
+            } elseif ($type === 'own_property' && $decision === 'add_house') {
+                $transaction = $this->addHouse($game, $player->id, (int) $action['game_property_id']);
+            } elseif ($type === 'own_property' && $decision === 'add_hotel') {
+                $transaction = $this->addHotel($game, $player->id, (int) $action['game_property_id']);
+            } elseif ($type === 'own_property' && $decision === 'sell_house') {
+                $transaction = $this->sellHouse($game, $player->id, (int) $action['game_property_id']);
+            } elseif ($type === 'own_property' && $decision === 'sell_hotel') {
+                $transaction = $this->sellHotel($game, $player->id, (int) $action['game_property_id']);
             } elseif ($type === 'pay_rent' && $decision === 'pay') {
                 $transaction = $this->payRent($game, $player->id, (int) $action['game_property_id'], $source);
             } elseif (in_array($type, ['pay_tax', 'pay_special_tax'], true) && $decision === 'pay') {
@@ -1224,6 +1234,27 @@ class MonopolyBankService
                 throw ValidationException::withMessages(['board' => 'Pilihan aksi petak tidak sesuai.']);
             }
 
+            if ($type === 'own_property') {
+                $latestPlayer = Player::query()->whereKey($player->id)->first();
+                if (! $latestPlayer) {
+                    return $transaction;
+                }
+
+                $nextAction = $this->propertySpaceAction($game, $latestPlayer, [
+                    'index' => (int) ($action['space_index'] ?? $latestPlayer->board_position),
+                    'name' => (string) ($action['space_name'] ?? ($action['property_name'] ?? 'Properti')),
+                    'type' => (string) ($action['space_type'] ?? 'property'),
+                ]);
+
+                Player::query()
+                    ->whereKey($player->id)
+                    ->update([
+                        'pending_space_action' => ($nextAction['action'] ?? null) === 'own_property' ? $nextAction : null,
+                    ]);
+
+                return $transaction;
+            }
+
             $freshPendingAction = Player::query()->whereKey($player->id)->first()?->pending_space_action;
             if (! $freshPendingAction || (int) data_get($freshPendingAction, 'card_draw_id') === (int) data_get($action, 'card_draw_id')) {
                 Player::query()
@@ -1233,6 +1264,31 @@ class MonopolyBankService
 
             return $transaction;
         });
+    }
+
+    private function skipRequiresPaymentResolution(string $type, array $action): bool
+    {
+        if (in_array($type, ['pay_tax', 'pay_special_tax', 'pay_rent'], true)) {
+            return true;
+        }
+
+        if (! str_starts_with($type, 'card_')) {
+            return false;
+        }
+
+        $skippableAutoCardActions = [
+            'card_receive',
+            'card_jail_free',
+            'card_go_to_jail',
+            'card_move_to',
+            'card_move_steps',
+        ];
+
+        if (in_array($type, $skippableAutoCardActions, true)) {
+            return false;
+        }
+
+        return (bool) ($action['requires_resolution'] ?? true);
     }
 
     public function useJailCard(Game $game, int $playerId): Transaction
@@ -1425,6 +1481,7 @@ class MonopolyBankService
             $this->ensureActive($game);
             $player = $this->playerForUpdate($game, $playerId);
             $gameProperty = $this->ownedGamePropertyForUpdate($game, $gamePropertyId, $player->id);
+            $this->ensureBuildableLandProperty($gameProperty, 'rumah');
             $amount = $gameProperty->property->price;
 
             $player->increment('balance', $amount);
@@ -1472,9 +1529,14 @@ class MonopolyBankService
             $this->ensureActive($game);
             $player = $this->playerForUpdate($game, $playerId);
             $gameProperty = $this->ownedGamePropertyForUpdate($game, $gamePropertyId, $player->id);
+            $this->ensureBuildableLandProperty($gameProperty, 'rumah');
 
-            if ($gameProperty->has_hotel || $gameProperty->house_count >= 4) {
-                throw ValidationException::withMessages(['house' => 'Maksimal 4 rumah sebelum membeli hotel.']);
+            if ($gameProperty->has_hotel) {
+                throw ValidationException::withMessages(['house' => 'Properti ini sudah punya hotel. Jual hotel dulu sebelum membeli rumah.']);
+            }
+
+            if ($gameProperty->house_count >= 4) {
+                throw ValidationException::withMessages(['house' => 'Maksimal 4 rumah untuk satu properti.']);
             }
 
             $amount = $gameProperty->property->house_price;
@@ -1499,6 +1561,7 @@ class MonopolyBankService
             $this->ensureActive($game);
             $player = $this->playerForUpdate($game, $playerId);
             $gameProperty = $this->ownedGamePropertyForUpdate($game, $gamePropertyId, $player->id);
+            $this->ensureBuildableLandProperty($gameProperty, 'hotel');
 
             if ($gameProperty->has_hotel || $gameProperty->house_count < 1) {
                 throw ValidationException::withMessages(['house' => 'Properti ini tidak memiliki rumah yang bisa dijual.']);
@@ -1525,19 +1588,18 @@ class MonopolyBankService
             $this->ensureActive($game);
             $player = $this->playerForUpdate($game, $playerId);
             $gameProperty = $this->ownedGamePropertyForUpdate($game, $gamePropertyId, $player->id);
+            $this->ensureBuildableLandProperty($gameProperty, 'hotel');
 
             if ($gameProperty->has_hotel) {
                 throw ValidationException::withMessages(['hotel' => 'Properti ini sudah memiliki hotel.']);
             }
 
+            if ($gameProperty->house_count > 0) {
+                throw ValidationException::withMessages(['hotel' => 'Jual semua rumah dulu (1/2 harga) sebelum membeli hotel.']);
+            }
+
             $amount = $gameProperty->property->hotel_price;
-            $houseRefund = $gameProperty->house_count * intdiv($gameProperty->property->house_price, 2);
-            if (($player->balance + $houseRefund) < $amount) {
-                throw ValidationException::withMessages(['balance' => "{$player->name} tidak memiliki saldo cukup."]);
-            }
-            if ($houseRefund > 0) {
-                $player->increment('balance', $houseRefund);
-            }
+            $this->ensureFunds($player, $amount);
             $player->decrement('balance', $amount);
             $gameProperty->update([
                 'house_count' => 0,
@@ -1549,9 +1611,8 @@ class MonopolyBankService
                 'amount' => $amount,
                 'from_player_id' => $player->id,
                 'game_property_id' => $gameProperty->id,
-                'description' => "{$player->name} menambah hotel di {$gameProperty->property->name}" . ($houseRefund > 0 ? " dan menjual rumah {$houseRefund}" : ''),
+                'description' => "{$player->name} menambah hotel di {$gameProperty->property->name}",
                 'balance_after_from' => $player->fresh()->balance,
-                'meta' => ['house_refund' => $houseRefund],
             ]);
         });
     }
@@ -1774,7 +1835,22 @@ class MonopolyBankService
         }
 
         if ($available->isEmpty()) {
-            throw ValidationException::withMessages(['card' => "Tidak ada kartu {$deck} yang bisa ditarik saat ini."]);
+            $available = GameCard::query()
+                ->where('deck', $deck)
+                ->where('is_active', true)
+                ->get();
+
+            if ($available->isNotEmpty()) {
+                $this->record($game, [
+                    'type' => 'card_deck_fallback_draw',
+                    'description' => "Deck {$deck} menggunakan fallback draw agar pemain tetap mendapat kartu.",
+                    'meta' => ['deck' => $deck],
+                ]);
+            }
+        }
+
+        if ($available->isEmpty()) {
+            throw ValidationException::withMessages(['card' => "Tidak ada kartu {$deck} aktif saat ini."]);
         }
 
         $card = $available->random();
@@ -1817,15 +1893,15 @@ class MonopolyBankService
 
         return match ($card->effect_type) {
             'receive' => $this->autoResolveReceiveCard($game, $player, $draw, (int) ($payload['amount'] ?? 0), $base),
-            'collect_players' => $base + ['amount' => (int) ($payload['amount'] ?? 0), 'requires_resolution' => true],
-            'pay_bank' => $base + ['amount' => (int) ($payload['amount'] ?? 0)],
-            'repair_assets' => $base + ['amount' => $this->repairCardAmount($player, (int) ($payload['house_amount'] ?? 0), (int) ($payload['hotel_amount'] ?? 0)), 'repair' => $this->repairCardBreakdown($player, (int) ($payload['house_amount'] ?? 0), (int) ($payload['hotel_amount'] ?? 0))],
-            'utility_rent' => $base + $this->utilityCardActionPayload($game, $player, (string) ($payload['property'] ?? '')),
+            'collect_players' => array_merge($base, ['amount' => (int) ($payload['amount'] ?? 0), 'requires_resolution' => true]),
+            'pay_bank' => array_merge($base, ['amount' => (int) ($payload['amount'] ?? 0)]),
+            'repair_assets' => $this->repairCardAction($game, $player, $draw, (int) ($payload['house_amount'] ?? 0), (int) ($payload['hotel_amount'] ?? 0), $base),
+            'utility_rent' => array_merge($base, $this->utilityCardActionPayload($game, $player, (string) ($payload['property'] ?? ''))),
             'move_to' => $this->resolveMoveCardImmediately($game, $player, $draw, $base),
             'move_steps' => $this->resolveMoveCardImmediately($game, $player, $draw, $base),
             'go_to_jail' => $this->autoResolveJailCard($game, $player, $draw, $base),
             'jail_free' => $this->autoResolveJailFreeCard($game, $player, $draw, $base),
-            'choice_pay_or_draw' => $base + ['amount' => (int) ($payload['amount'] ?? 0), 'choice_draw_deck' => $payload['draw_deck'] ?? 'Kesempatan'],
+            'choice_pay_or_draw' => array_merge($base, ['amount' => (int) ($payload['amount'] ?? 0), 'choice_draw_deck' => $payload['draw_deck'] ?? 'Kesempatan']),
             default => $base,
         };
     }
@@ -1862,7 +1938,14 @@ class MonopolyBankService
             ]);
         }
 
-        if (in_array($type, ['pay_bank', 'repair_assets', 'choice_pay_or_draw'], true)) {
+        if ($type === 'repair_assets' && $amount <= 0) {
+            $transaction = $this->record($game, [
+                'type' => 'card_no_payment',
+                'to_player_id' => $player->id,
+                'description' => "{$draw->card->title}: tidak ada rumah/hotel, tidak ada pembayaran.",
+                'meta' => ['card_key' => $draw->card->key, 'card_draw_id' => $draw->id],
+            ]);
+        } elseif (in_array($type, ['pay_bank', 'repair_assets', 'choice_pay_or_draw'], true)) {
             $transaction = $this->payBankFromSource($game, $player, $amount, $source, "{$draw->card->deck}: {$draw->card->title}", [
                 'card_key' => $draw->card->key,
                 'card_draw_id' => $draw->id,
@@ -1889,6 +1972,37 @@ class MonopolyBankService
         return $transaction;
     }
 
+    private function repairCardAction(Game $game, Player $player, GameCardDraw $draw, int $houseAmount, int $hotelAmount, array $base): array
+    {
+        $repair = $this->repairCardBreakdown($player, $houseAmount, $hotelAmount);
+        $amount = $repair['house_total'] + $repair['hotel_total'];
+
+        if ($amount <= 0) {
+            $draw->update(['status' => 'resolved', 'resolved_at' => now()]);
+            $this->record($game, [
+                'type' => 'card_no_payment',
+                'to_player_id' => $player->id,
+                'description' => "{$draw->card->title}: tidak ada rumah/hotel, tidak ada pembayaran.",
+                'meta' => ['card_key' => $draw->card->key, 'card_draw_id' => $draw->id],
+            ]);
+
+        return array_merge($base, [
+                'amount' => 0,
+                'repair' => $repair,
+                'requires_resolution' => false,
+                'auto_resolved' => true,
+            'show_card' => true,
+            ]);
+        }
+
+        return array_merge($base, [
+            'amount' => $amount,
+            'repair' => $repair,
+            'requires_resolution' => true,
+            'auto_resolved' => false,
+        ]);
+    }
+
     private function autoResolveReceiveCard(Game $game, Player $player, GameCardDraw $draw, int $amount, array $base): array
     {
         $player->increment('balance', $amount);
@@ -1902,7 +2016,7 @@ class MonopolyBankService
             'meta' => ['card_key' => $draw->card->key, 'card_draw_id' => $draw->id],
         ]);
 
-        return $base + ['amount' => $amount, 'requires_resolution' => false, 'auto_resolved' => true];
+        return array_merge($base, ['amount' => $amount, 'requires_resolution' => false, 'auto_resolved' => true, 'show_card' => true]);
     }
 
     private function autoResolveJailFreeCard(Game $game, Player $player, GameCardDraw $draw, array $base): array
@@ -1916,7 +2030,7 @@ class MonopolyBankService
             'meta' => ['card_key' => $draw->card->key, 'card_draw_id' => $draw->id],
         ]);
 
-        return $base + ['requires_resolution' => false, 'auto_resolved' => true];
+        return array_merge($base, ['requires_resolution' => false, 'auto_resolved' => true, 'show_card' => true]);
     }
 
     private function autoResolveJailCard(Game $game, Player $player, GameCardDraw $draw, array $base): array
@@ -1937,7 +2051,7 @@ class MonopolyBankService
             'meta' => ['card_key' => $draw->card->key, 'card_draw_id' => $draw->id],
         ]);
 
-        return $base + ['requires_resolution' => false, 'auto_resolved' => true];
+        return array_merge($base, ['requires_resolution' => false, 'auto_resolved' => true, 'show_card' => true]);
     }
 
     private function resolveMoveCardImmediately(Game $game, Player $player, GameCardDraw $draw, array $base): array
@@ -1983,7 +2097,27 @@ class MonopolyBankService
                 'double_streak' => 0,
             ]);
         } elseif (($nextAction['requires_resolution'] ?? false) || ($nextAction['action'] ?? null) === 'info') {
-            $player->fresh()->update(['pending_space_action' => $nextAction]);
+            $player->fresh()->update([
+                'pending_space_action' => array_merge($nextAction, [
+                    'card_draw_id' => $draw->id,
+                    'card' => $this->cardPayload($draw->card),
+                    'card_message' => $draw->card->description,
+                ]),
+            ]);
+        } else {
+            $player->fresh()->update([
+                'pending_space_action' => [
+                    'action' => 'info',
+                    'space_index' => $space['index'],
+                    'space_name' => $space['name'],
+                    'space_type' => $space['type'],
+                    'label' => "{$draw->card->deck}: {$draw->card->title}",
+                    'message' => $draw->card->description,
+                    'card_draw_id' => $draw->id,
+                    'card' => $this->cardPayload($draw->card),
+                    'requires_resolution' => false,
+                ],
+            ]);
         }
 
         $this->record($game, [
@@ -2003,7 +2137,7 @@ class MonopolyBankService
             ],
         ]);
 
-        return $base + [
+        return array_merge($base, [
             'amount' => $bonus,
             'requires_resolution' => false,
             'auto_resolved' => true,
@@ -2016,7 +2150,7 @@ class MonopolyBankService
                 'bonus' => $bonus,
                 'next_action' => $nextAction,
             ],
-        ];
+        ]);
     }
 
     private function repairCardBreakdown(Player $player, int $houseAmount, int $hotelAmount): array
@@ -2272,7 +2406,7 @@ class MonopolyBankService
                 'pending_space_action' => null,
                 'double_streak' => 0,
             ]);
-        } elseif (($action['requires_resolution'] ?? false) || ($action['action'] ?? null) === 'info') {
+        } elseif (($action['requires_resolution'] ?? false) || ($action['action'] ?? null) === 'info' || ($action['show_card'] ?? false)) {
             $player->update(['pending_space_action' => $action]);
         }
 
@@ -2400,6 +2534,31 @@ class MonopolyBankService
         }
 
         if ((int) $property->owner_id === (int) $player->id) {
+            $propertyKind = $property->property->property_kind ?? 'land';
+            $isBuildableLand = $propertyKind === 'land';
+            $houseCount = (int) $property->house_count;
+            $hasHotel = (bool) $property->has_hotel;
+            $housePrice = (int) $property->property->house_price;
+            $hotelPrice = (int) $property->property->hotel_price;
+            $sellHouseValue = (int) intdiv($housePrice, 2);
+            $sellHotelValue = (int) intdiv($hotelPrice, 2);
+            $canBuyHouse = $isBuildableLand && ! $hasHotel && $houseCount < 4;
+            $canBuyHotel = $isBuildableLand && ! $hasHotel && $houseCount === 0;
+            $canSellHouse = $isBuildableLand && ! $hasHotel && $houseCount > 0;
+            $canSellHotel = $isBuildableLand && $hasHotel;
+
+            $message = $isBuildableLand
+                ? "{$property->property->name} milik kamu. Rumah: {$houseCount}/4" . ($hasHotel ? ', Hotel: 1' : ', Hotel: 0') . '.'
+                : "{$property->property->name} milik kamu. Petak ini tidak bisa dibangun rumah/hotel.";
+
+            if ($isBuildableLand && $hasHotel) {
+                $message .= ' Kamu sudah punya hotel. Jika ingin beli rumah, jual hotel dulu (1/2 harga).';
+            } elseif ($isBuildableLand && $houseCount > 0) {
+                $message .= ' Kamu sudah punya rumah. Jika ingin beli hotel, jual semua rumah dulu (1/2 harga per rumah).';
+            } elseif ($isBuildableLand) {
+                $message .= ' Kamu bisa pilih jalur rumah atau langsung hotel.';
+            }
+
             return [
                 'action' => 'own_property',
                 'space_index' => $space['index'],
@@ -2407,9 +2566,22 @@ class MonopolyBankService
                 'space_type' => $space['type'],
                 'game_property_id' => $property->id,
                 'property_name' => $property->property->name,
+                'property_kind' => $propertyKind,
+                'house_count' => $houseCount,
+                'has_hotel' => $hasHotel,
+                'can_build' => $isBuildableLand,
+                'can_buy_house' => $canBuyHouse,
+                'can_buy_hotel' => $canBuyHotel,
+                'can_sell_house' => $canSellHouse,
+                'can_sell_hotel' => $canSellHotel,
+                'house_price' => $housePrice,
+                'hotel_price' => $hotelPrice,
+                'sell_house_value' => $sellHouseValue,
+                'sell_hotel_value' => $sellHotelValue,
+                'sell_property_value' => (int) intdiv((int) $property->property->price, 2),
                 'label' => 'Properti sendiri',
-                'message' => "{$property->property->name} adalah properti kamu.",
-                'requires_resolution' => false,
+                'message' => $message,
+                'requires_resolution' => true,
             ];
         }
 
@@ -2439,6 +2611,7 @@ class MonopolyBankService
             'terminal tokyo' => 'terminal bus tokyo',
             'rrc (china)' => 'rrc',
             'brazilia' => 'brazilia',
+            'filipina' => 'philipina',
         ];
         $lookupName = $aliases[$name] ?? $name;
 
@@ -2662,6 +2835,15 @@ class MonopolyBankService
         return $gameProperty;
     }
 
+    private function ensureBuildableLandProperty(GameProperty $gameProperty, string $assetLabel): void
+    {
+        if (($gameProperty->property->property_kind ?? 'land') !== 'land') {
+            throw ValidationException::withMessages([
+                'property' => "Petak {$gameProperty->property->name} tidak bisa untuk {$assetLabel}. Hanya tanah (land) yang bisa.",
+            ]);
+        }
+    }
+
     private function wealthRows(Game $game): array
     {
         return $game->players->mapWithKeys(function (Player $player) use ($game) {
@@ -2807,6 +2989,7 @@ class MonopolyBankService
     {
         $propertyName = $property?->property?->name ?? 'pilihan tanah';
         $amount = (int) ($payload['amount'] ?? 0);
+        $bulkTotal = (int) ($payload['bulk_total'] ?? 0);
 
         return match ($type) {
             'buy_property' => "{$player->name} ingin membeli {$propertyName}",
@@ -2815,6 +2998,7 @@ class MonopolyBankService
             'sell_house' => "{$player->name} ingin menjual rumah di {$propertyName}",
             'add_hotel' => "{$player->name} ingin membeli hotel di {$propertyName}",
             'sell_hotel' => "{$player->name} ingin menjual hotel di {$propertyName}",
+            'bulk_sell_assets' => "{$player->name} mengajukan jual aset paket (target {$bulkTotal})",
             'pay_rent' => "{$player->name} ingin membayar sewa {$propertyName}",
             'transfer' => "{$player->name} ingin mengirim {$amount} ke {$target?->name}",
             'deposit' => "{$player->name} ingin setor tunai {$amount}",
@@ -2829,6 +3013,12 @@ class MonopolyBankService
 
     private function validatePlayerRequest(Player $player, string $type, ?GameProperty $property, ?Player $target, array $payload): void
     {
+        if ($type === 'bulk_sell_assets') {
+            $this->validateBulkSellAssetsRequest($player, $payload);
+
+            return;
+        }
+
         if (in_array($type, ['buy_property', 'sell_property', 'add_house', 'sell_house', 'add_hotel', 'sell_hotel', 'pay_rent'], true) && ! $property) {
             throw ValidationException::withMessages(['property' => 'Pilih tanah/tempat dulu.']);
         }
@@ -2867,6 +3057,86 @@ class MonopolyBankService
 
         if ($type === 'use_jail_card' && $player->jail_free_cards <= 0) {
             throw ValidationException::withMessages(['jail_free_cards' => 'Kamu belum punya kartu bebas penjara.']);
+        }
+    }
+
+    private function validateBulkSellAssetsRequest(Player $player, array $payload): void
+    {
+        $plan = $payload['liquidation_plan'] ?? null;
+
+        if (! is_array($plan) || $plan === []) {
+            throw ValidationException::withMessages(['liquidation_plan' => 'Pilih paket jual aset dulu.']);
+        }
+
+        if (count($plan) > 30) {
+            throw ValidationException::withMessages(['liquidation_plan' => 'Paket terlalu besar. Maksimal 30 aksi jual.']);
+        }
+
+        $allowedTypes = ['sell_property', 'sell_house', 'sell_hotel'];
+        $propertyIds = collect($plan)
+            ->map(fn ($item) => (int) ($item['game_property_id'] ?? 0))
+            ->filter(fn (int $id) => $id > 0)
+            ->unique()
+            ->values();
+
+        if ($propertyIds->isEmpty()) {
+            throw ValidationException::withMessages(['liquidation_plan' => 'Paket jual aset tidak valid.']);
+        }
+
+        $ownedProperties = GameProperty::query()
+            ->where('game_id', $player->game_id)
+            ->where('owner_id', $player->id)
+            ->whereIn('id', $propertyIds)
+            ->pluck('id')
+            ->all();
+
+        foreach ($plan as $index => $item) {
+            $type = (string) ($item['type'] ?? '');
+            $gamePropertyId = (int) ($item['game_property_id'] ?? 0);
+            $quantity = max(1, (int) ($item['quantity'] ?? 1));
+
+            if (! in_array($type, $allowedTypes, true)) {
+                throw ValidationException::withMessages(["liquidation_plan.{$index}.type" => 'Jenis jual aset tidak dikenali.']);
+            }
+
+            if (! in_array($gamePropertyId, $ownedProperties, true)) {
+                throw ValidationException::withMessages(["liquidation_plan.{$index}.game_property_id" => 'Aset bukan milik pemain atau tidak ditemukan.']);
+            }
+
+            if ($quantity > 10) {
+                throw ValidationException::withMessages(["liquidation_plan.{$index}.quantity" => 'Jumlah aksi jual terlalu besar.']);
+            }
+        }
+    }
+
+    private function requestAmount(string $type, array $payload): ?int
+    {
+        if ($type === 'bulk_sell_assets') {
+            return (int) ($payload['bulk_total'] ?? 0);
+        }
+
+        return isset($payload['amount']) ? (int) $payload['amount'] : null;
+    }
+
+    private function approveBulkSellAssetsRequest(Game $game, int $playerId, array $payload): void
+    {
+        $player = $this->playerForUpdate($game, $playerId);
+        $this->validateBulkSellAssetsRequest($player, $payload);
+        $plan = $payload['liquidation_plan'] ?? [];
+
+        foreach ($plan as $item) {
+            $type = (string) ($item['type'] ?? '');
+            $gamePropertyId = (int) ($item['game_property_id'] ?? 0);
+            $quantity = max(1, (int) ($item['quantity'] ?? 1));
+
+            for ($i = 0; $i < $quantity; $i++) {
+                match ($type) {
+                    'sell_property' => $this->sellProperty($game, $playerId, $gamePropertyId),
+                    'sell_house' => $this->sellHouse($game, $playerId, $gamePropertyId),
+                    'sell_hotel' => $this->sellHotel($game, $playerId, $gamePropertyId),
+                    default => throw ValidationException::withMessages(['liquidation_plan' => 'Ada aksi jual yang tidak didukung.']),
+                };
+            }
         }
     }
 
