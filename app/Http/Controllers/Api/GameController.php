@@ -97,6 +97,18 @@ class GameController extends Controller
         return $this->stateResponse($game, 'Semua kartu Dana Umum & Kesempatan bisa dipakai lagi.');
     }
 
+    public function drawCard(Request $request, Game $game): JsonResponse
+    {
+        $data = $request->validate([
+            'player_id' => ['required', 'integer'],
+            'deck' => ['required', 'string', 'in:Dana Umum,Kesempatan'],
+        ]);
+
+        $draw = $this->bank->drawOnlineCard($game, $data['player_id'], $data['deck']);
+
+        return $this->stateResponse($game, "{$draw->player?->name} mendapat kartu {$draw->card?->deck}: {$draw->card?->title}.");
+    }
+
     public function setFirstPlayer(Request $request, Game $game): JsonResponse
     {
         $data = $request->validate([

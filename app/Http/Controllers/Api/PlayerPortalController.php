@@ -48,6 +48,10 @@ class PlayerPortalController extends Controller
                 ])
                 ->values()
                 ->all(),
+            'jail_card_transfers' => collect($state['jail_card_transfers'] ?? [])
+                ->filter(fn ($transfer) => (int) $transfer['to_player_id'] === (int) $accessToken->player_id || (int) $transfer['from_player_id'] === (int) $accessToken->player_id)
+                ->values()
+                ->all(),
         ]);
     }
 
@@ -128,7 +132,7 @@ class PlayerPortalController extends Controller
     {
         $accessToken = $this->accessToken($token);
         $data = $request->validate([
-            'decision' => ['required', 'string', 'in:buy,pay,skip'],
+            'decision' => ['required', 'string', 'in:buy,pay,skip,draw_chance'],
             'source' => ['nullable', 'string', 'in:bank,cash'],
         ]);
 
@@ -138,6 +142,37 @@ class PlayerPortalController extends Controller
         return response()->json([
             'message' => 'Aksi petak selesai.',
         ]);
+    }
+
+    public function decideJailCardTransfer(Request $request, string $token, int $transferId): JsonResponse
+    {
+        $accessToken = $this->accessToken($token);
+        $data = $request->validate([
+            'approve' => ['required', 'boolean'],
+        ]);
+
+        $this->bank->decideJailFreeCardTransfer($accessToken->game, $accessToken->player_id, $transferId, (bool) $data['approve']);
+        SafeBroadcast::gameUpdated($accessToken->game_id);
+
+        return response()->json([
+            'message' => $data['approve'] ? 'Kartu bebas penjara berhasil dibeli.' : 'Penawaran kartu ditolak.',
+        ]);
+    }
+
+    public function offerJailCardTransfer(Request $request, string $token): JsonResponse
+    {
+        $accessToken = $this->accessToken($token);
+        $data = $request->validate([
+            'to_player_id' => ['required', 'integer'],
+        ]);
+
+        $transfer = $this->bank->transferJailFreeCard($accessToken->game, $accessToken->player_id, $data['to_player_id']);
+        SafeBroadcast::gameUpdated($accessToken->game_id);
+
+        return response()->json([
+            'message' => 'Penawaran kartu bebas penjara dikirim.',
+            'transfer_id' => $transfer->id,
+        ], 201);
     }
 
     private function accessToken(string $token): PlayerAccessToken

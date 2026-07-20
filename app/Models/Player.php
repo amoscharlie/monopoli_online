@@ -74,4 +74,9 @@ class Player extends Model
     {
         return $this->hasMany(TransactionRequest::class);
     }
+
+    public function cardDraws(): HasMany
+    {
+        return $this->hasMany(GameCardDraw::class);
+    }
 }

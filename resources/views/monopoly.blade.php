@@ -699,29 +699,29 @@
                                         <h2 class="mt-1 text-2xl font-black">Dana Umum & Kesempatan</h2>
                                     </div>
                                     <div class="flex flex-wrap items-center gap-3">
-                                        <p class="max-w-md text-sm text-slate-400">Pilih pemain, lalu klik kartu yang didapat. Kartu yang sudah dipakai tidak bisa dipakai lagi sampai semua kartu diacak ulang.</p>
+                                        <p class="max-w-md text-sm text-slate-400">Pilih pemain aktif, lalu ambil kartu online. Kartu tidak berulang sampai deck habis; kartu bebas penjara keluar dari deck selama disimpan pemain.</p>
                                         <button @click="drawRandomCard('Dana Umum')" :disabled="!lastScannedPlayer() || current.game.status !== 'active'" class="rounded-xl bg-emerald-400 px-4 py-2 text-xs font-black text-slate-950 transition hover:bg-emerald-300 disabled:opacity-50">Acak Dana Umum</button>
                                         <button @click="drawRandomCard('Kesempatan')" :disabled="!lastScannedPlayer() || current.game.status !== 'active'" class="rounded-xl bg-rose-400 px-4 py-2 text-xs font-black text-white transition hover:bg-rose-300 disabled:opacity-50">Acak Kesempatan</button>
                                         <button @click="drawRandomCard()" :disabled="!lastScannedPlayer() || current.game.status !== 'active'" class="rounded-xl bg-blue-400 px-4 py-2 text-xs font-black text-slate-950 transition hover:bg-blue-300 disabled:opacity-50">Acak Semua</button>
                                         <button @click="refreshCards()" :disabled="current.game.status === 'finished'" class="rounded-xl bg-purple-400 px-4 py-2 text-xs font-black text-slate-950 transition hover:bg-purple-300 disabled:opacity-50">Acak Ulang Kartu</button>
                                     </div>
                                 </div>
-                                <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                                    <template x-for="action in cardActions" :key="action.key">
-                                        <button
-                                            @click="runCardAction(action)"
-                                            :disabled="!lastScannedPlayer() || current.game.status !== 'active' || isCardUsed(action)"
-                                            class="rounded-2xl border border-white/10 p-3 text-left transition hover:bg-white/15 disabled:opacity-50"
-                                            :class="isCardUsed(action) ? 'bg-slate-950/40 grayscale' : 'bg-white/10'"
-                                        >
-                                            <div class="mb-2 flex items-center justify-between gap-2">
-                                                <span class="inline-flex rounded-full px-2.5 py-1 text-[11px] font-black uppercase" :class="action.deck === 'Dana Umum' ? 'bg-emerald-400/15 text-emerald-300' : 'bg-rose-400/15 text-rose-300'" x-text="action.deck"></span>
-                                            <span x-show="isCardUsed(action)" class="rounded-full bg-slate-700 px-2 py-1 text-[10px] font-black uppercase text-slate-300">Sudah dipakai</span>
-                                            </div>
-                                            <span class="block text-sm font-black" x-text="action.label"></span>
-                                            <span class="mt-1 block text-sm font-black" :class="action.flow === 'receive' || action.flow === 'collect_players' ? 'text-emerald-300' : 'text-orange-300'" x-text="`${action.flow === 'receive' || action.flow === 'collect_players' ? '+' : '-'}${money(action.amount)}`"></span>
-                                        </button>
-                                    </template>
+                                <div class="grid gap-3 md:grid-cols-3">
+                                    <div class="rounded-2xl border border-emerald-300/20 bg-emerald-300/10 p-4">
+                                        <p class="text-xs font-black uppercase tracking-[0.18em] text-emerald-200">Dana Umum</p>
+                                        <p class="mt-2 text-3xl font-black text-emerald-300" x-text="`${current?.cards?.decks?.['Dana Umum']?.available ?? 0}/${current?.cards?.decks?.['Dana Umum']?.total ?? 0}`"></p>
+                                        <p class="text-xs text-slate-400">Sisa kartu siap ambil</p>
+                                    </div>
+                                    <div class="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4">
+                                        <p class="text-xs font-black uppercase tracking-[0.18em] text-rose-200">Kesempatan</p>
+                                        <p class="mt-2 text-3xl font-black text-rose-300" x-text="`${current?.cards?.decks?.Kesempatan?.available ?? 0}/${current?.cards?.decks?.Kesempatan?.total ?? 0}`"></p>
+                                        <p class="text-xs text-slate-400">Sisa kartu siap ambil</p>
+                                    </div>
+                                    <div class="rounded-2xl border border-white/10 bg-white/5 p-4">
+                                        <p class="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Kartu Terakhir</p>
+                                        <p class="mt-2 text-lg font-black" x-text="current?.cards?.last_draw?.card?.title || '-'"></p>
+                                        <p class="text-xs text-slate-400" x-text="current?.cards?.last_draw?.player_name || 'Belum ada kartu'"></p>
+                                    </div>
                                 </div>
                             </div>
 

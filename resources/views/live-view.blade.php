@@ -226,6 +226,20 @@
                         </template>
                     </div>
                 </div>
+
+                <div x-show="state?.cards?.last_draw" class="glass-card p-4 xl:p-5">
+                    <div class="flex items-start gap-4">
+                        <div class="grid h-14 w-14 shrink-0 place-items-center rounded-2xl text-2xl font-black" :class="state?.cards?.last_draw?.deck === 'Dana Umum' ? 'bg-emerald-300 text-slate-950' : 'bg-rose-400 text-white'">
+                            <span x-text="state?.cards?.last_draw?.deck === 'Dana Umum' ? 'DU' : 'K'"></span>
+                        </div>
+                        <div class="min-w-0">
+                            <p class="text-sm font-black uppercase tracking-[0.22em]" :class="state?.cards?.last_draw?.deck === 'Dana Umum' ? 'text-emerald-300' : 'text-rose-300'" x-text="state?.cards?.last_draw?.deck"></p>
+                            <h2 class="mt-1 text-[clamp(1.4rem,2vw,2.6rem)] font-black leading-tight" x-text="state?.cards?.last_draw?.card?.title"></h2>
+                            <p class="mt-1 text-sm text-slate-300" x-text="state?.cards?.last_draw?.card?.description"></p>
+                            <p class="mt-2 text-xs font-bold text-slate-400" x-text="`${state?.cards?.last_draw?.player_name || '-'} mendapatkan kartu ini`"></p>
+                        </div>
+                    </div>
+                </div>
             </aside>
         </section>
     </main>

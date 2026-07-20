@@ -3,7 +3,10 @@
 namespace App\Services;
 
 use App\Models\Game;
+use App\Models\GameCard;
+use App\Models\GameCardDraw;
 use App\Models\GameProperty;
+use App\Models\JailFreeCardTransfer;
 use App\Models\DiceRoll;
 use App\Models\Player;
 use App\Models\PlayerAccessToken;
@@ -20,6 +23,48 @@ use Illuminate\Validation\ValidationException;
 
 class MonopolyBankService
 {
+    private const CARD_DECKS = ['Dana Umum', 'Kesempatan'];
+
+    private const DEFAULT_CARDS = [
+        ['deck' => 'Dana Umum', 'key' => 'dana_perusahaan_listrik', 'title' => 'Perusahaan Listrik', 'description' => 'Sewa 4 x lipat dari angka dadu. Bila punya Pers. Listrik, sewa 10 x dari angka dadu.', 'effect_type' => 'utility_rent', 'sort_order' => 1, 'payload' => ['property' => 'Perusahaan Listrik']],
+        ['deck' => 'Dana Umum', 'key' => 'dana_kembali_indonesia', 'title' => 'Kembali menuju Indonesia', 'description' => 'Pindah ke Indonesia.', 'effect_type' => 'move_to', 'sort_order' => 2, 'payload' => ['space' => 'Indonesia', 'collect_start' => false]],
+        ['deck' => 'Dana Umum', 'key' => 'dana_kesalahan_bank', 'title' => 'Kesalahan Bank', 'description' => 'Karena kesalahan Bank, Anda terima 20000.', 'effect_type' => 'receive', 'sort_order' => 3, 'payload' => ['amount' => 20000]],
+        ['deck' => 'Dana Umum', 'key' => 'dana_bebas_penjara', 'title' => 'Bebas dari Penjara', 'description' => 'Kartu ini bisa disimpan, dipakai bila perlu, atau boleh dijual.', 'effect_type' => 'jail_free', 'sort_order' => 4, 'payload' => ['transfer_price' => 3000]],
+        ['deck' => 'Dana Umum', 'key' => 'dana_ulang_tahun', 'title' => 'Hari ulang tahun', 'description' => 'Anda terima 1000 dari tiap pemain.', 'effect_type' => 'collect_players', 'sort_order' => 5, 'payload' => ['amount' => 1000]],
+        ['deck' => 'Dana Umum', 'key' => 'dana_bayar_dokter', 'title' => 'Bayar dokter', 'description' => 'Bayar dokter 5000.', 'effect_type' => 'pay_bank', 'sort_order' => 6, 'payload' => ['amount' => 5000]],
+        ['deck' => 'Dana Umum', 'key' => 'dana_masuk_penjara', 'title' => 'Masuk Penjara', 'description' => 'Tidak melalui Start. Tidak terima 20000.', 'effect_type' => 'go_to_jail', 'sort_order' => 7, 'payload' => []],
+        ['deck' => 'Dana Umum', 'key' => 'dana_bayar_kartu_atau_kesempatan', 'title' => 'Bayar kartu atau mengambil Kesempatan', 'description' => 'Bayar kartu 1000 atau mengambil Kesempatan.', 'effect_type' => 'choice_pay_or_draw', 'sort_order' => 8, 'payload' => ['amount' => 1000, 'draw_deck' => 'Kesempatan']],
+        ['deck' => 'Dana Umum', 'key' => 'dana_dapat_komisi', 'title' => 'Dapat komisi', 'description' => 'Dapat komisi 5000.', 'effect_type' => 'receive', 'sort_order' => 9, 'payload' => ['amount' => 5000]],
+        ['deck' => 'Dana Umum', 'key' => 'dana_bayar_rs', 'title' => 'Bayar Rumah Sakit', 'description' => 'Bayar Rumah Sakit 100000.', 'effect_type' => 'pay_bank', 'sort_order' => 10, 'payload' => ['amount' => 100000]],
+        ['deck' => 'Dana Umum', 'key' => 'dana_bayar_asuransi', 'title' => 'Bayar Asuransi', 'description' => 'Bayar Asuransi 2000.', 'effect_type' => 'pay_bank', 'sort_order' => 11, 'payload' => ['amount' => 2000]],
+        ['deck' => 'Dana Umum', 'key' => 'dana_dapat_warisan', 'title' => 'Dapat warisan', 'description' => 'Dapat warisan 100000.', 'effect_type' => 'receive', 'sort_order' => 12, 'payload' => ['amount' => 100000]],
+        ['deck' => 'Dana Umum', 'key' => 'dana_maju_start', 'title' => 'Maju sampai Start', 'description' => 'Maju sampai Start.', 'effect_type' => 'move_to', 'sort_order' => 13, 'payload' => ['space' => 'Start', 'landed_bonus' => 10000, 'collect_start' => false]],
+        ['deck' => 'Dana Umum', 'key' => 'dana_terima_bunga', 'title' => 'Terima Bunga', 'description' => 'Terima Bunga 100000.', 'effect_type' => 'receive', 'sort_order' => 14, 'payload' => ['amount' => 100000]],
+        ['deck' => 'Dana Umum', 'key' => 'dana_hadiah_totalisator', 'title' => 'Dapat Hadiah Totalisator', 'description' => 'Dapat hadiah totalisator 1000.', 'effect_type' => 'receive', 'sort_order' => 15, 'payload' => ['amount' => 1000]],
+        ['deck' => 'Dana Umum', 'key' => 'dana_bunga_bank_7', 'title' => 'Terima Bunga dari Bank 7%', 'description' => 'Terima Bunga dari Bank 7% 2500.', 'effect_type' => 'receive', 'sort_order' => 16, 'payload' => ['amount' => 2500]],
+        ['deck' => 'Dana Umum', 'key' => 'dana_sisa_pajak_jalan', 'title' => 'Dapat Sisa Uang Pajak Jalan', 'description' => 'Dapat sisa uang pajak jalan 5000.', 'effect_type' => 'receive', 'sort_order' => 17, 'payload' => ['amount' => 5000]],
+        ['deck' => 'Dana Umum', 'key' => 'dana_sumbangan_bencana', 'title' => 'Sumbangan bencana alam', 'description' => 'Sumbangan untuk bencana alam 50000.', 'effect_type' => 'pay_bank', 'sort_order' => 18, 'payload' => ['amount' => 50000]],
+
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_stasiun_london', 'title' => 'Majulah sampai Stasiun London', 'description' => 'Bila melalui Start, terima 20000.', 'effect_type' => 'move_to', 'sort_order' => 1, 'payload' => ['space' => 'Stasiun London', 'collect_start' => true]],
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_bebas_penjara', 'title' => 'Bebas dari Penjara', 'description' => 'Kartu ini bisa disimpan, dipakai bila perlu, atau boleh dijual.', 'effect_type' => 'jail_free', 'sort_order' => 2, 'payload' => ['transfer_price' => 3000]],
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_maju_mesir', 'title' => 'Maju sampai Mesir', 'description' => 'Pindah ke Mesir.', 'effect_type' => 'move_to', 'sort_order' => 3, 'payload' => ['space' => 'Mesir', 'collect_start' => false]],
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_betul_rumah', 'title' => 'Bayar ongkos bikin betul rumah', 'description' => '1 rumah 2500, 1 hotel 10000.', 'effect_type' => 'repair_assets', 'sort_order' => 4, 'payload' => ['house_amount' => 2500, 'hotel_amount' => 10000]],
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_maju_brazilia', 'title' => 'Maju sampai Brazilia', 'description' => 'Bila melalui Start terima 15000.', 'effect_type' => 'move_to', 'sort_order' => 5, 'payload' => ['space' => 'Brazilia', 'collect_start' => true, 'extra_pass_start_bonus' => 15000]],
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_perusahaan_air', 'title' => 'Perusahaan Air', 'description' => 'Sewa 4 x lipat dari angka dadu. Bila punya persh. air, sewa 10 x dari angka dadu.', 'effect_type' => 'utility_rent', 'sort_order' => 6, 'payload' => ['property' => 'Perusahaan Air']],
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_betul_jalan', 'title' => 'Bayar ongkos bikin-betul jalan', 'description' => '1 rumah 4000, 1 hotel 11500.', 'effect_type' => 'repair_assets', 'sort_order' => 7, 'payload' => ['house_amount' => 4000, 'hotel_amount' => 11500]],
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_masuk_penjara', 'title' => 'Masuk Penjara', 'description' => 'Tidak melalui Start. Tidak terima 20000.', 'effect_type' => 'go_to_jail', 'sort_order' => 8, 'payload' => []],
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_lalu_lintas', 'title' => 'Melanggar undang lalu lintas', 'description' => 'Bayar denda 15000.', 'effect_type' => 'pay_bank', 'sort_order' => 9, 'payload' => ['amount' => 15000]],
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_sewa_bank', 'title' => 'Terima uang sewa dari Bank', 'description' => 'Terima uang sewa dari Bank 15000.', 'effect_type' => 'receive', 'sort_order' => 10, 'payload' => ['amount' => 15000]],
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_tts', 'title' => 'Hadiah Teka-Teki Silang', 'description' => 'Dapat hadiah pertama Teka-Teki Silang 10000.', 'effect_type' => 'receive', 'sort_order' => 11, 'payload' => ['amount' => 10000]],
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_mabuk', 'title' => 'Mabuk di muka umum', 'description' => 'Denda 15000.', 'effect_type' => 'pay_bank', 'sort_order' => 12, 'payload' => ['amount' => 15000]],
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_terima_bunga_bank', 'title' => 'Terima Bunga dari Bank', 'description' => 'Terima Bunga dari Bank 5000.', 'effect_type' => 'receive', 'sort_order' => 13, 'payload' => ['amount' => 5000]],
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_mundur_tiga', 'title' => 'Mundur tiga petak', 'description' => 'Mundur tiga petak.', 'effect_type' => 'move_steps', 'sort_order' => 14, 'payload' => ['steps' => -3]],
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_pajak_penghasilan', 'title' => 'Bayar pajak penghasilan', 'description' => 'Bayar pajak penghasilan 15000.', 'effect_type' => 'pay_bank', 'sort_order' => 15, 'payload' => ['amount' => 15000]],
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_maju_start', 'title' => 'Maju sampai Start', 'description' => 'Maju sampai Start.', 'effect_type' => 'move_to', 'sort_order' => 16, 'payload' => ['space' => 'Start', 'landed_bonus' => 10000, 'collect_start' => false]],
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_uang_sekolah', 'title' => 'Bayar uang sekolah', 'description' => 'Bayar uang sekolah 150000.', 'effect_type' => 'pay_bank', 'sort_order' => 17, 'payload' => ['amount' => 150000]],
+        ['deck' => 'Kesempatan', 'key' => 'kesempatan_kembali_indonesia', 'title' => 'Kembali menuju Indonesia', 'description' => 'Kembali menuju Indonesia.', 'effect_type' => 'move_to', 'sort_order' => 18, 'payload' => ['space' => 'Indonesia', 'collect_start' => false]],
+    ];
+
     private const BOARD_SPACES = [
         ['index' => 0, 'name' => 'Start', 'type' => 'start'],
         ['index' => 1, 'name' => 'Indonesia', 'type' => 'property'],
@@ -74,6 +119,8 @@ class MonopolyBankService
         '#ef4444',
     ];
 
+    private bool $defaultCardsEnsured = false;
+
     public function settingsPayload(): array
     {
         return [
@@ -87,6 +134,8 @@ class MonopolyBankService
 
     public function createGame(array $payload): Game
     {
+        $this->ensureDefaultCards();
+
         if (Property::query()->doesntExist()) {
             throw ValidationException::withMessages([
                 'properties' => 'Daftar properti masih kosong. Jalankan seeder atau tambahkan properti di Settings.',
@@ -180,6 +229,8 @@ class MonopolyBankService
 
     public function state(Game $game): array
     {
+        $this->ensureDefaultCards();
+
         $game->load([
             'players',
             'winner',
@@ -187,6 +238,10 @@ class MonopolyBankService
             'firstPlayer',
             'currentTurnPlayer',
             'diceRolls.player',
+            'cardDraws.card',
+            'cardDraws.player',
+            'jailFreeCardTransfers.fromPlayer',
+            'jailFreeCardTransfers.toPlayer',
             'gameProperties.property',
             'gameProperties.owner',
             'playerAccessTokens.player',
@@ -263,7 +318,10 @@ class MonopolyBankService
             'transactions' => $transactions,
             'cards' => [
                 'used_keys' => $this->usedCardKeys($game),
+                'decks' => $this->cardDeckPayload($game),
+                'last_draw' => $this->lastCardDrawPayload($game),
             ],
+            'jail_card_transfers' => $this->jailTransferPayload($game),
             'player_portal' => [
                 'players' => $this->playerPortalLinks($game),
                 'pending_requests' => $game->transactionRequests
@@ -338,10 +396,153 @@ class MonopolyBankService
     {
         $this->ensureNotFinished($game);
 
+        GameCardDraw::query()
+            ->where('game_id', $game->id)
+            ->whereIn('status', ['drawn', 'resolved'])
+            ->update([
+                'status' => 'returned',
+                'resolved_at' => now(),
+            ]);
+
         return $this->record($game, [
             'type' => 'card_refresh',
             'description' => 'Kartu Dana Umum & Kesempatan di-refresh',
         ]);
+    }
+
+    public function drawOnlineCard(Game $game, int $playerId, string $deck): GameCardDraw
+    {
+        return DB::transaction(function () use ($game, $playerId, $deck) {
+            $this->ensureActive($game);
+            $this->ensureDefaultCards();
+            $deck = $this->normalizeDeck($deck);
+            $player = $this->playerForUpdate($game, $playerId);
+
+            if ($player->pending_space_action) {
+                throw ValidationException::withMessages(['card' => 'Selesaikan aksi yang sedang terbuka dulu.']);
+            }
+
+            $draw = $this->drawCardForPlayer($game, $player, $deck);
+            $action = $this->cardActionFromDraw($game, $player->fresh(), $draw);
+
+            if (($action['auto_resolved'] ?? false) === false) {
+                $player->fresh()->update(['pending_space_action' => $action]);
+            }
+
+            $this->record($game, [
+                'type' => 'card_draw',
+                'to_player_id' => $player->id,
+                'description' => "{$player->name} mendapat kartu {$draw->card->deck}: {$draw->card->title}",
+                'meta' => [
+                    'card_draw_id' => $draw->id,
+                    'card_key' => $draw->card->key,
+                    'deck' => $draw->card->deck,
+                    'card' => $this->cardPayload($draw->card),
+                    'action' => $action,
+                ],
+            ]);
+
+            return $draw->fresh(['card', 'player']);
+        });
+    }
+
+    public function transferJailFreeCard(Game $game, int $fromPlayerId, int $toPlayerId): JailFreeCardTransfer
+    {
+        return DB::transaction(function () use ($game, $fromPlayerId, $toPlayerId) {
+            $this->ensureActive($game);
+            $from = $this->playerForUpdate($game, $fromPlayerId);
+            $to = $this->playerForUpdate($game, $toPlayerId);
+
+            if ((int) $from->id === (int) $to->id) {
+                throw ValidationException::withMessages(['player' => 'Tidak perlu jual kartu ke diri sendiri.']);
+            }
+
+            $draw = GameCardDraw::query()
+                ->where('game_id', $game->id)
+                ->where('player_id', $from->id)
+                ->where('status', 'held')
+                ->whereHas('card', fn ($query) => $query->where('effect_type', 'jail_free'))
+                ->oldest()
+                ->first();
+
+            if (! $draw || $from->jail_free_cards <= 0) {
+                throw ValidationException::withMessages(['card' => "{$from->name} tidak punya kartu bebas penjara untuk dijual."]);
+            }
+
+            $duplicate = JailFreeCardTransfer::query()
+                ->where('game_id', $game->id)
+                ->where('from_player_id', $from->id)
+                ->where('to_player_id', $to->id)
+                ->where('status', 'pending')
+                ->exists();
+
+            if ($duplicate) {
+                throw ValidationException::withMessages(['card' => 'Penawaran kartu yang sama masih menunggu jawaban.']);
+            }
+
+            return JailFreeCardTransfer::query()->create([
+                'game_id' => $game->id,
+                'from_player_id' => $from->id,
+                'to_player_id' => $to->id,
+                'game_card_draw_id' => $draw->id,
+                'amount' => 3000,
+            ]);
+        });
+    }
+
+    public function decideJailFreeCardTransfer(Game $game, int $playerId, int $transferId, bool $approve): ?Transaction
+    {
+        return DB::transaction(function () use ($game, $playerId, $transferId, $approve) {
+            $this->ensureActive($game);
+            $transfer = JailFreeCardTransfer::query()
+                ->where('game_id', $game->id)
+                ->where('to_player_id', $playerId)
+                ->whereKey($transferId)
+                ->where('status', 'pending')
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (! $approve) {
+                $transfer->update(['status' => 'rejected', 'decided_at' => now()]);
+                return $this->record($game, [
+                    'type' => 'jail_card_transfer_rejected',
+                    'from_player_id' => $transfer->to_player_id,
+                    'to_player_id' => $transfer->from_player_id,
+                    'description' => "{$transfer->toPlayer?->name} menolak membeli kartu bebas penjara",
+                    'meta' => ['transfer_id' => $transfer->id],
+                ]);
+            }
+
+            $from = $this->playerForUpdate($game, $transfer->from_player_id);
+            $to = $this->playerForUpdate($game, $transfer->to_player_id);
+            $this->ensureFunds($to, $transfer->amount);
+
+            if ($from->jail_free_cards <= 0) {
+                throw ValidationException::withMessages(['card' => "{$from->name} sudah tidak punya kartu bebas penjara."]);
+            }
+
+            $to->decrement('balance', $transfer->amount);
+            $from->increment('balance', $transfer->amount);
+            $from->decrement('jail_free_cards');
+            $to->increment('jail_free_cards');
+
+            if ($transfer->draw) {
+                $transfer->draw->update(['player_id' => $to->id]);
+            }
+
+            $transfer->update(['status' => 'approved', 'decided_at' => now()]);
+
+            return $this->record($game, [
+                'type' => 'jail_card_transfer',
+                'amount' => $transfer->amount,
+                'from_player_id' => $to->id,
+                'to_player_id' => $from->id,
+                'description' => "{$to->name} membeli kartu bebas penjara dari {$from->name} seharga {$transfer->amount}",
+                'balance_after_from' => $to->fresh()->balance,
+                'balance_after_to' => $from->fresh()->balance,
+                'meta' => ['transfer_id' => $transfer->id],
+            ]);
+        });
     }
 
     public function bankruptcyPreview(Game $game, int $playerId): array
@@ -996,6 +1197,10 @@ class MonopolyBankService
             $transaction = null;
 
             if ($decision === 'skip') {
+                if (str_starts_with($type, 'card_') || in_array($type, ['pay_tax', 'pay_special_tax', 'pay_rent'], true)) {
+                    throw ValidationException::withMessages(['board' => 'Aksi bayar tidak bisa dilewati. Selesaikan pembayaran dulu.']);
+                }
+
                 $player->update(['pending_space_action' => null]);
                 $this->record($game, [
                     'type' => 'space_skipped',
@@ -1013,13 +1218,18 @@ class MonopolyBankService
             } elseif (in_array($type, ['pay_tax', 'pay_special_tax'], true) && $decision === 'pay') {
                 $amount = (int) ($action['amount'] ?? 0);
                 $transaction = $this->playerToBank($game, $player->id, $amount, $action['label'] ?? 'Bayar pajak');
+            } elseif (str_starts_with($type, 'card_') && in_array($decision, ['pay', 'draw_chance'], true)) {
+                $transaction = $this->resolveCardAction($game, $player, $action, $decision, $source);
             } else {
                 throw ValidationException::withMessages(['board' => 'Pilihan aksi petak tidak sesuai.']);
             }
 
-            Player::query()
-                ->whereKey($player->id)
-                ->update(['pending_space_action' => null]);
+            $freshPendingAction = Player::query()->whereKey($player->id)->first()?->pending_space_action;
+            if (! $freshPendingAction || (int) data_get($freshPendingAction, 'card_draw_id') === (int) data_get($action, 'card_draw_id')) {
+                Player::query()
+                    ->whereKey($player->id)
+                    ->update(['pending_space_action' => null]);
+            }
 
             return $transaction;
         });
@@ -1041,6 +1251,14 @@ class MonopolyBankService
 
             $player->decrement('jail_free_cards');
             $player->update(['pending_jail_release' => true]);
+            GameCardDraw::query()
+                ->where('game_id', $game->id)
+                ->where('player_id', $player->id)
+                ->where('status', 'held')
+                ->whereHas('card', fn ($query) => $query->where('effect_type', 'jail_free'))
+                ->oldest()
+                ->first()
+                ?->update(['status' => 'returned', 'resolved_at' => now()]);
 
             return $this->record($game, [
                 'type' => 'use_jail_card',
@@ -1475,6 +1693,476 @@ class MonopolyBankService
         }
     }
 
+    private function ensureDefaultCards(): void
+    {
+        if ($this->defaultCardsEnsured) {
+            return;
+        }
+
+        foreach (self::DEFAULT_CARDS as $card) {
+            GameCard::query()->updateOrCreate(
+                ['key' => $card['key']],
+                [
+                    'deck' => $card['deck'],
+                    'title' => $card['title'],
+                    'description' => $card['description'],
+                    'effect_type' => $card['effect_type'],
+                    'sort_order' => $card['sort_order'],
+                    'payload' => $card['payload'],
+                    'is_active' => true,
+                ]
+            );
+        }
+
+        $this->defaultCardsEnsured = true;
+    }
+
+    private function normalizeDeck(string $deck): string
+    {
+        $deck = Str::of($deck)->lower()->contains('kesempatan') ? 'Kesempatan' : 'Dana Umum';
+
+        if (! in_array($deck, self::CARD_DECKS, true)) {
+            throw ValidationException::withMessages(['deck' => 'Deck kartu tidak dikenal.']);
+        }
+
+        return $deck;
+    }
+
+    private function drawCardForPlayer(Game $game, Player $player, string $deck): GameCardDraw
+    {
+        $activeCards = GameCard::query()
+            ->where('deck', $deck)
+            ->where('is_active', true)
+            ->pluck('id');
+
+        $blockedIds = GameCardDraw::query()
+            ->where('game_id', $game->id)
+            ->whereIn('status', ['drawn', 'resolved', 'held'])
+            ->whereIn('game_card_id', $activeCards)
+            ->pluck('game_card_id');
+
+        $available = GameCard::query()
+            ->where('deck', $deck)
+            ->where('is_active', true)
+            ->whereNotIn('id', $blockedIds)
+            ->get();
+
+        if ($available->isEmpty()) {
+            GameCardDraw::query()
+                ->where('game_id', $game->id)
+                ->where('deck', $deck)
+                ->whereIn('status', ['drawn', 'resolved'])
+                ->update(['status' => 'returned', 'resolved_at' => now()]);
+
+            $heldIds = GameCardDraw::query()
+                ->where('game_id', $game->id)
+                ->where('deck', $deck)
+                ->where('status', 'held')
+                ->pluck('game_card_id');
+
+            $available = GameCard::query()
+                ->where('deck', $deck)
+                ->where('is_active', true)
+                ->whereNotIn('id', $heldIds)
+                ->get();
+
+            $this->record($game, [
+                'type' => 'card_deck_reshuffled',
+                'description' => "Deck {$deck} habis, sistem mengocok ulang kartu yang sudah selesai.",
+                'meta' => ['deck' => $deck],
+            ]);
+        }
+
+        if ($available->isEmpty()) {
+            throw ValidationException::withMessages(['card' => "Tidak ada kartu {$deck} yang bisa ditarik saat ini."]);
+        }
+
+        $card = $available->random();
+
+        return GameCardDraw::query()->create([
+            'game_id' => $game->id,
+            'game_card_id' => $card->id,
+            'player_id' => $player->id,
+            'deck' => $card->deck,
+            'status' => 'drawn',
+            'snapshot' => $this->cardPayload($card),
+        ])->fresh(['card', 'player']);
+    }
+
+    private function onlineCardSpaceAction(Game $game, Player $player, array $space): array
+    {
+        $deck = $space['type'] === 'community_card' ? 'Dana Umum' : 'Kesempatan';
+        $draw = $this->drawCardForPlayer($game, $player, $deck);
+
+        return $this->cardActionFromDraw($game, $player, $draw) + [
+            'space_index' => $space['index'],
+            'space_name' => $space['name'],
+            'space_type' => $space['type'],
+        ];
+    }
+
+    private function cardActionFromDraw(Game $game, Player $player, GameCardDraw $draw): array
+    {
+        $card = $draw->card;
+        $payload = $card->payload ?? [];
+        $base = [
+            'action' => 'card_' . $card->effect_type,
+            'card_draw_id' => $draw->id,
+            'card' => $this->cardPayload($card),
+            'label' => "{$card->deck}: {$card->title}",
+            'message' => $card->description,
+            'requires_resolution' => true,
+            'auto_resolved' => false,
+        ];
+
+        return match ($card->effect_type) {
+            'receive' => $this->autoResolveReceiveCard($game, $player, $draw, (int) ($payload['amount'] ?? 0), $base),
+            'collect_players' => $base + ['amount' => (int) ($payload['amount'] ?? 0), 'requires_resolution' => true],
+            'pay_bank' => $base + ['amount' => (int) ($payload['amount'] ?? 0)],
+            'repair_assets' => $base + ['amount' => $this->repairCardAmount($player, (int) ($payload['house_amount'] ?? 0), (int) ($payload['hotel_amount'] ?? 0)), 'repair' => $this->repairCardBreakdown($player, (int) ($payload['house_amount'] ?? 0), (int) ($payload['hotel_amount'] ?? 0))],
+            'utility_rent' => $base + $this->utilityCardActionPayload($game, $player, (string) ($payload['property'] ?? '')),
+            'move_to' => $this->resolveMoveCardImmediately($game, $player, $draw, $base),
+            'move_steps' => $this->resolveMoveCardImmediately($game, $player, $draw, $base),
+            'go_to_jail' => $this->autoResolveJailCard($game, $player, $draw, $base),
+            'jail_free' => $this->autoResolveJailFreeCard($game, $player, $draw, $base),
+            'choice_pay_or_draw' => $base + ['amount' => (int) ($payload['amount'] ?? 0), 'choice_draw_deck' => $payload['draw_deck'] ?? 'Kesempatan'],
+            default => $base,
+        };
+    }
+
+    private function resolveCardAction(Game $game, Player $player, array $action, string $decision, string $source): ?Transaction
+    {
+        $draw = GameCardDraw::query()
+            ->with('card')
+            ->where('game_id', $game->id)
+            ->where('player_id', $player->id)
+            ->whereKey((int) ($action['card_draw_id'] ?? 0))
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        $type = $draw->card->effect_type;
+        $payload = $draw->card->payload ?? [];
+        $amount = (int) ($action['amount'] ?? $payload['amount'] ?? 0);
+        $transaction = null;
+
+        if ($type === 'choice_pay_or_draw' && $decision === 'draw_chance') {
+            $draw->update(['status' => 'resolved', 'resolved_at' => now()]);
+            $player->update(['pending_space_action' => null]);
+            $newDraw = $this->drawCardForPlayer($game, $player, $payload['draw_deck'] ?? 'Kesempatan');
+            $newAction = $this->cardActionFromDraw($game, $player->fresh(), $newDraw);
+            if (! ($newAction['auto_resolved'] ?? false)) {
+                $player->fresh()->update(['pending_space_action' => $newAction]);
+            }
+
+            return $this->record($game, [
+                'type' => 'card_choice_draw',
+                'to_player_id' => $player->id,
+                'description' => "{$player->name} memilih mengambil kartu {$newDraw->card->deck}",
+                'meta' => ['from_card' => $draw->card->key, 'card_draw_id' => $newDraw->id],
+            ]);
+        }
+
+        if (in_array($type, ['pay_bank', 'repair_assets', 'choice_pay_or_draw'], true)) {
+            $transaction = $this->payBankFromSource($game, $player, $amount, $source, "{$draw->card->deck}: {$draw->card->title}", [
+                'card_key' => $draw->card->key,
+                'card_draw_id' => $draw->id,
+            ]);
+        } elseif ($type === 'collect_players') {
+            $transaction = $this->collectFromPlayers($game, $player->id, $amount, "{$draw->card->deck}: {$draw->card->title}");
+        } elseif ($type === 'utility_rent') {
+            if ((int) ($action['game_property_id'] ?? 0) <= 0 || $amount <= 0) {
+                $transaction = $this->record($game, [
+                    'type' => 'card_no_payment',
+                    'to_player_id' => $player->id,
+                    'description' => "{$draw->card->title}: belum ada pemilik, tidak ada pembayaran.",
+                    'meta' => ['card_key' => $draw->card->key],
+                ]);
+            } else {
+                $transaction = $this->payRentFixedAmount($game, $player->id, (int) $action['game_property_id'], $amount, $source, "{$draw->card->deck}: {$draw->card->title}");
+            }
+        } else {
+            throw ValidationException::withMessages(['card' => 'Kartu ini sudah selesai otomatis atau belum punya aksi bayar.']);
+        }
+
+        $draw->update(['status' => 'resolved', 'resolved_at' => now()]);
+
+        return $transaction;
+    }
+
+    private function autoResolveReceiveCard(Game $game, Player $player, GameCardDraw $draw, int $amount, array $base): array
+    {
+        $player->increment('balance', $amount);
+        $draw->update(['status' => 'resolved', 'resolved_at' => now()]);
+        $this->record($game, [
+            'type' => 'card_receive',
+            'amount' => $amount,
+            'to_player_id' => $player->id,
+            'description' => "{$player->name} menerima {$amount} dari kartu {$draw->card->deck}: {$draw->card->title}",
+            'balance_after_to' => $player->fresh()->balance,
+            'meta' => ['card_key' => $draw->card->key, 'card_draw_id' => $draw->id],
+        ]);
+
+        return $base + ['amount' => $amount, 'requires_resolution' => false, 'auto_resolved' => true];
+    }
+
+    private function autoResolveJailFreeCard(Game $game, Player $player, GameCardDraw $draw, array $base): array
+    {
+        $player->increment('jail_free_cards');
+        $draw->update(['status' => 'held']);
+        $this->record($game, [
+            'type' => 'card_jail_free_received',
+            'to_player_id' => $player->id,
+            'description' => "{$player->name} menyimpan kartu bebas penjara dari {$draw->card->deck}",
+            'meta' => ['card_key' => $draw->card->key, 'card_draw_id' => $draw->id],
+        ]);
+
+        return $base + ['requires_resolution' => false, 'auto_resolved' => true];
+    }
+
+    private function autoResolveJailCard(Game $game, Player $player, GameCardDraw $draw, array $base): array
+    {
+        $player->update([
+            'board_position' => 10,
+            'is_in_jail' => true,
+            'jail_turn_count' => 0,
+            'pending_jail_release' => false,
+            'double_streak' => 0,
+            'pending_space_action' => null,
+        ]);
+        $draw->update(['status' => 'resolved', 'resolved_at' => now()]);
+        $this->record($game, [
+            'type' => 'card_go_to_jail',
+            'to_player_id' => $player->id,
+            'description' => "{$player->name} masuk penjara karena kartu {$draw->card->deck}",
+            'meta' => ['card_key' => $draw->card->key, 'card_draw_id' => $draw->id],
+        ]);
+
+        return $base + ['requires_resolution' => false, 'auto_resolved' => true];
+    }
+
+    private function resolveMoveCardImmediately(Game $game, Player $player, GameCardDraw $draw, array $base): array
+    {
+        $payload = $draw->card->payload ?? [];
+        $oldPosition = (int) $player->board_position;
+        $newPosition = $draw->card->effect_type === 'move_steps'
+            ? $this->normalizedBoardPosition($oldPosition + (int) ($payload['steps'] ?? 0))
+            : $this->positionForSpace((string) ($payload['space'] ?? 'Start'));
+
+        $boardSize = count(self::BOARD_SPACES);
+        $passedStart = $newPosition < $oldPosition && (bool) ($payload['collect_start'] ?? false);
+        $bonus = 0;
+        if ($passedStart) {
+            $bonus += 20000 + (int) ($payload['extra_pass_start_bonus'] ?? 0);
+        } elseif ($newPosition === 0 && array_key_exists('landed_bonus', $payload)) {
+            $bonus += (int) $payload['landed_bonus'];
+        }
+
+        $lapCount = (int) $player->lap_count + ($passedStart ? 1 : 0);
+        $player->update([
+            'board_position' => $newPosition,
+            'lap_count' => $lapCount,
+            'rules_unlocked' => $player->rules_unlocked || $lapCount > 0,
+            'pending_space_action' => null,
+        ]);
+
+        if ($bonus > 0) {
+            $player->increment('balance', $bonus);
+        }
+
+        $draw->update(['status' => 'resolved', 'resolved_at' => now()]);
+        $space = $this->boardSpace($newPosition);
+        $nextAction = $this->spaceActionFor($game, $player->fresh(), $space);
+
+        if (($nextAction['action'] ?? 'none') === 'go_to_jail') {
+            $player->fresh()->update([
+                'board_position' => 10,
+                'is_in_jail' => true,
+                'jail_turn_count' => 0,
+                'pending_jail_release' => false,
+                'pending_space_action' => null,
+                'double_streak' => 0,
+            ]);
+        } elseif (($nextAction['requires_resolution'] ?? false) || ($nextAction['action'] ?? null) === 'info') {
+            $player->fresh()->update(['pending_space_action' => $nextAction]);
+        }
+
+        $this->record($game, [
+            'type' => 'card_move',
+            'amount' => $bonus,
+            'to_player_id' => $player->id,
+            'description' => "{$player->name} mengikuti kartu {$draw->card->title} menuju {$space['name']}" . ($bonus ? " dan menerima {$bonus}" : ''),
+            'balance_after_to' => $player->fresh()->balance,
+            'meta' => [
+                'card_key' => $draw->card->key,
+                'card_draw_id' => $draw->id,
+                'from_position' => $oldPosition,
+                'to_position' => $newPosition,
+                'passed_start' => $passedStart,
+                'bonus' => $bonus,
+                'next_action' => $nextAction,
+            ],
+        ]);
+
+        return $base + [
+            'amount' => $bonus,
+            'requires_resolution' => false,
+            'auto_resolved' => true,
+            'movement' => [
+                'from_position' => $oldPosition,
+                'to_position' => $newPosition,
+                'from_space' => $this->boardSpace($oldPosition),
+                'to_space' => $space,
+                'passed_start' => $passedStart,
+                'bonus' => $bonus,
+                'next_action' => $nextAction,
+            ],
+        ];
+    }
+
+    private function repairCardBreakdown(Player $player, int $houseAmount, int $hotelAmount): array
+    {
+        $properties = GameProperty::query()
+            ->where('game_id', $player->game_id)
+            ->where('owner_id', $player->id)
+            ->get();
+
+        $houses = $properties->sum('house_count');
+        $hotels = $properties->where('has_hotel', true)->count();
+
+        return [
+            'houses' => $houses,
+            'hotels' => $hotels,
+            'house_amount' => $houseAmount,
+            'hotel_amount' => $hotelAmount,
+            'house_total' => $houses * $houseAmount,
+            'hotel_total' => $hotels * $hotelAmount,
+        ];
+    }
+
+    private function repairCardAmount(Player $player, int $houseAmount, int $hotelAmount): int
+    {
+        $breakdown = $this->repairCardBreakdown($player, $houseAmount, $hotelAmount);
+
+        return $breakdown['house_total'] + $breakdown['hotel_total'];
+    }
+
+    private function utilityCardActionPayload(Game $game, Player $player, string $propertyName): array
+    {
+        $property = $this->gamePropertyForSpace($game, [
+            'index' => -1,
+            'name' => $propertyName,
+            'type' => 'utility',
+        ]);
+        $lastRoll = DiceRoll::query()
+            ->where('game_id', $game->id)
+            ->where('player_id', $player->id)
+            ->latest()
+            ->first();
+        $diceTotal = $lastRoll?->total ?: 0;
+
+        if (! $property || ! $property->owner_id || (int) $property->owner_id === (int) $player->id) {
+            return [
+                'amount' => 0,
+                'game_property_id' => $property?->id,
+                'owner_id' => $property?->owner_id,
+                'owner_name' => $property?->owner?->name,
+                'message' => "{$propertyName} belum dimiliki pemain lain, jadi tidak ada pembayaran.",
+            ];
+        }
+
+        $ownerUtilityCount = GameProperty::query()
+            ->where('game_id', $game->id)
+            ->where('owner_id', $property->owner_id)
+            ->whereHas('property', fn ($query) => $query->where('property_kind', 'utility'))
+            ->count();
+        $multiplier = $ownerUtilityCount >= 2 ? 10 : 4;
+        $amount = $diceTotal * $multiplier;
+
+        return [
+            'amount' => $amount,
+            'game_property_id' => $property->id,
+            'owner_id' => $property->owner_id,
+            'owner_name' => $property->owner?->name,
+            'dice_total' => $diceTotal,
+            'multiplier' => $multiplier,
+            'message' => "Bayar {$amount} ke {$property->owner?->name}: dadu {$diceTotal} x {$multiplier}.",
+        ];
+    }
+
+    private function payBankFromSource(Game $game, Player $player, int $amount, string $source, string $reason, array $meta = []): Transaction
+    {
+        $amount = $this->positiveAmount($amount);
+        if ($source === 'cash') {
+            $this->ensureCashFunds($player, $amount);
+            $player->decrement('cash_balance', $amount);
+            $player->refresh();
+
+            return $this->record($game, [
+                'type' => 'player_to_bank',
+                'amount' => $amount,
+                'from_player_id' => $player->id,
+                'description' => "{$player->name} membayar {$amount} cash ke Bank ({$reason})",
+                'balance_after_from' => $player->cash_balance,
+                'meta' => $meta + ['source' => 'cash'],
+            ]);
+        }
+
+        return $this->playerToBank($game, $player->id, $amount, $reason);
+    }
+
+    private function payRentFixedAmount(Game $game, int $payerPlayerId, int $gamePropertyId, int $amount, string $source, string $reason): Transaction
+    {
+        $property = GameProperty::query()
+            ->with(['property', 'owner'])
+            ->where('game_id', $game->id)
+            ->whereKey($gamePropertyId)
+            ->lockForUpdate()
+            ->firstOrFail();
+        $payer = $this->playerForUpdate($game, $payerPlayerId);
+        $this->validateRentTarget($property, $payer);
+
+        if ($source === 'cash') {
+            $this->ensureCashFunds($payer, $amount);
+            $payer->decrement('cash_balance', $amount);
+        } else {
+            $this->ensureFunds($payer, $amount);
+            $payer->decrement('balance', $amount);
+        }
+
+        $property->owner->increment('balance', $amount);
+
+        return $this->record($game, [
+            'type' => 'pay_rent',
+            'amount' => $amount,
+            'from_player_id' => $payer->id,
+            'to_player_id' => $property->owner_id,
+            'game_property_id' => $property->id,
+            'description' => "{$payer->name} membayar {$reason} {$amount} ke {$property->owner?->name}",
+            'balance_after_from' => $source === 'cash' ? $payer->fresh()->cash_balance : $payer->fresh()->balance,
+            'balance_after_to' => $property->owner->fresh()->balance,
+            'meta' => ['source' => $source, 'fixed_card_rent' => true],
+        ]);
+    }
+
+    private function normalizedBoardPosition(int $position): int
+    {
+        $size = count(self::BOARD_SPACES);
+
+        return (($position % $size) + $size) % $size;
+    }
+
+    private function positionForSpace(string $spaceName): int
+    {
+        $target = Str::lower($spaceName);
+        foreach (self::BOARD_SPACES as $space) {
+            if (Str::lower($space['name']) === $target || str_contains(Str::lower($space['name']), $target) || str_contains($target, Str::lower($space['name']))) {
+                return (int) $space['index'];
+            }
+        }
+
+        return 0;
+    }
+
     private function bankruptcySummary(Player $player, EloquentCollection $gameProperties): array
     {
         $ownedProperties = $gameProperties->where('owner_id', $player->id);
@@ -1653,15 +2341,7 @@ class MonopolyBankService
                 'message' => 'Pemain langsung masuk penjara.',
                 'requires_resolution' => false,
             ],
-            'community_card', 'chance_card' => [
-                'action' => 'info',
-                'space_index' => $space['index'],
-                'space_name' => $space['name'],
-                'space_type' => $space['type'],
-                'label' => $space['type'] === 'community_card' ? 'Dana Umum' : 'Kesempatan',
-                'message' => 'Ambil kartu fisik/manual dulu. Efek kartu online akan dibuat di update berikutnya.',
-                'requires_resolution' => true,
-            ],
+            'community_card', 'chance_card' => $this->onlineCardSpaceAction($game, $player, $space),
             default => [
                 'action' => 'none',
                 'space_index' => $space['index'],
@@ -2239,6 +2919,81 @@ class MonopolyBankService
             'has_hotel' => $gameProperty->has_hotel,
             'is_mortgaged' => $gameProperty->is_mortgaged,
         ];
+    }
+
+    private function cardPayload(GameCard $card): array
+    {
+        return [
+            'id' => $card->id,
+            'deck' => $card->deck,
+            'key' => $card->key,
+            'title' => $card->title,
+            'description' => $card->description,
+            'effect_type' => $card->effect_type,
+            'payload' => $card->payload ?? [],
+        ];
+    }
+
+    private function cardDrawPayload(GameCardDraw $draw): array
+    {
+        return [
+            'id' => $draw->id,
+            'deck' => $draw->deck,
+            'status' => $draw->status,
+            'player_id' => $draw->player_id,
+            'player_name' => $draw->player?->name,
+            'card' => $draw->card ? $this->cardPayload($draw->card) : $draw->snapshot,
+            'created_at_label' => $draw->created_at?->format('H:i:s'),
+        ];
+    }
+
+    private function cardDeckPayload(Game $game): array
+    {
+        $cards = GameCard::query()->where('is_active', true)->get()->groupBy('deck');
+        $draws = $game->cardDraws;
+
+        return collect(self::CARD_DECKS)
+            ->mapWithKeys(function (string $deck) use ($cards, $draws) {
+                $deckCards = $cards->get($deck, collect());
+                $blocked = $draws
+                    ->where('deck', $deck)
+                    ->whereIn('status', ['drawn', 'resolved', 'held'])
+                    ->pluck('game_card_id')
+                    ->unique();
+
+                return [$deck => [
+                    'total' => $deckCards->count(),
+                    'available' => max(0, $deckCards->count() - $blocked->count()),
+                    'used' => $draws->where('deck', $deck)->whereIn('status', ['drawn', 'resolved'])->count(),
+                    'held' => $draws->where('deck', $deck)->where('status', 'held')->count(),
+                ]];
+            })
+            ->all();
+    }
+
+    private function lastCardDrawPayload(Game $game): ?array
+    {
+        $draw = $game->cardDraws->first();
+
+        return $draw ? $this->cardDrawPayload($draw) : null;
+    }
+
+    private function jailTransferPayload(Game $game): array
+    {
+        return $game->jailFreeCardTransfers
+            ->take(20)
+            ->map(fn (JailFreeCardTransfer $transfer) => [
+                'id' => $transfer->id,
+                'from_player_id' => $transfer->from_player_id,
+                'from_player_name' => $transfer->fromPlayer?->name,
+                'to_player_id' => $transfer->to_player_id,
+                'to_player_name' => $transfer->toPlayer?->name,
+                'amount' => $transfer->amount,
+                'status' => $transfer->status,
+                'created_at_label' => $transfer->created_at?->format('H:i:s'),
+            ])
+            ->values()
+            ->all();
     }
 
     private function completeGroups(Game $game): array

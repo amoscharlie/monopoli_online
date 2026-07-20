@@ -20,6 +20,7 @@ Route::post('/games/{game}/resume', [GameController::class, 'resume']);
 Route::post('/games/{game}/reset', [GameController::class, 'reset']);
 Route::post('/games/{game}/finish', [GameController::class, 'finish']);
 Route::post('/games/{game}/cards/refresh', [GameController::class, 'refreshCards']);
+Route::post('/games/{game}/cards/draw', [GameController::class, 'drawCard']);
 Route::post('/games/{game}/first-player', [GameController::class, 'setFirstPlayer']);
 Route::post('/games/{game}/requests/{requestId}/approve', [TransactionRequestController::class, 'approve']);
 Route::post('/games/{game}/requests/{requestId}/reject', [TransactionRequestController::class, 'reject']);
@@ -30,6 +31,8 @@ Route::post('/player/{token}/rent-preview', [PlayerPortalController::class, 'ren
 Route::post('/player/{token}/pay-rent', [PlayerPortalController::class, 'payRent']);
 Route::post('/player/{token}/roll-dice', [PlayerPortalController::class, 'rollDice']);
 Route::post('/player/{token}/space-action', [PlayerPortalController::class, 'resolveSpaceAction']);
+Route::post('/player/{token}/jail-card-transfers/{transferId}', [PlayerPortalController::class, 'decideJailCardTransfer']);
+Route::post('/player/{token}/jail-card-transfers', [PlayerPortalController::class, 'offerJailCardTransfer']);
 
 Route::post('/games/{game}/transactions/transfer', [TransactionController::class, 'transfer']);
 Route::post('/games/{game}/transactions/pay-rent', [TransactionController::class, 'payRent']);

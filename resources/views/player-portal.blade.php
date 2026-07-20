@@ -276,9 +276,18 @@
                 <p class="text-xs font-black uppercase tracking-[0.16em] text-blue-300" x-text="spaceAction()?.label"></p>
                 <h3 class="mt-1 text-xl font-black" x-text="spaceAction()?.space_name"></h3>
                 <p class="mt-1 text-sm text-slate-300" x-text="spaceAction()?.message"></p>
-                <p x-show="spaceAction()?.amount" class="mt-3 text-3xl font-black" :class="['pay_tax','pay_special_tax','pay_rent'].includes(spaceAction()?.action) ? 'text-rose-300' : 'text-emerald-300'" x-text="money(spaceAction()?.amount)"></p>
+                <div x-show="spaceAction()?.card" class="mt-3 rounded-3xl border p-4" :class="spaceAction()?.card?.deck === 'Dana Umum' ? 'border-emerald-300/30 bg-emerald-300/10' : 'border-rose-300/30 bg-rose-300/10'">
+                    <p class="text-xs font-black uppercase tracking-[0.18em]" :class="spaceAction()?.card?.deck === 'Dana Umum' ? 'text-emerald-200' : 'text-rose-200'" x-text="spaceAction()?.card?.deck"></p>
+                    <h4 class="mt-1 text-2xl font-black" x-text="spaceAction()?.card?.title"></h4>
+                    <p class="mt-2 text-sm text-slate-200" x-text="spaceAction()?.card?.description"></p>
+                    <div x-show="spaceAction()?.repair" class="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-300">
+                        <span>Rumah: <b x-text="`${spaceAction()?.repair?.houses || 0} x ${money(spaceAction()?.repair?.house_amount)}`"></b></span>
+                        <span>Hotel: <b x-text="`${spaceAction()?.repair?.hotels || 0} x ${money(spaceAction()?.repair?.hotel_amount)}`"></b></span>
+                    </div>
+                </div>
+                <p x-show="spaceAction()?.amount" class="mt-3 text-3xl font-black" :class="['pay_tax','pay_special_tax','pay_rent','card_pay_bank','card_repair_assets','card_utility_rent','card_choice_pay_or_draw'].includes(spaceAction()?.action) ? 'text-rose-300' : 'text-emerald-300'" x-text="money(spaceAction()?.amount)"></p>
 
-                <div x-show="['pay_tax','pay_special_tax','pay_rent'].includes(spaceAction()?.action)" class="mt-3 grid grid-cols-2 gap-2">
+                <div x-show="['pay_tax','pay_special_tax','pay_rent','card_pay_bank','card_repair_assets','card_utility_rent','card_choice_pay_or_draw'].includes(spaceAction()?.action)" class="mt-3 grid grid-cols-2 gap-2">
                     <button @click="form.source = 'bank'" :class="form.source === 'bank' ? 'bg-emerald-400 text-slate-950' : 'bg-white/10'" class="rounded-xl px-3 py-3 text-sm font-black">Uang Bank</button>
                     <button @click="form.source = 'cash'" :class="form.source === 'cash' ? 'bg-blue-400 text-slate-950' : 'bg-white/10'" class="rounded-xl px-3 py-3 text-sm font-black">Uang Tunai</button>
                 </div>
@@ -296,10 +305,11 @@
                     </div>
                 </div>
 
-                <div class="mt-4 grid gap-2" :class="spaceAction()?.action === 'buy_property' ? 'grid-cols-3' : 'grid-cols-2'">
+                <div class="mt-4 grid gap-2" :class="spaceAction()?.action === 'buy_property' || spaceAction()?.action === 'card_choice_pay_or_draw' ? 'grid-cols-3' : 'grid-cols-2'">
                     <button x-show="spaceAction()?.action === 'buy_property'" @click="resolveSpaceAction('buy')" :disabled="submitInFlight" class="rounded-xl bg-emerald-400 px-3 py-3 text-sm font-black text-slate-950 disabled:opacity-50">Beli</button>
-                    <button x-show="['pay_tax','pay_special_tax','pay_rent'].includes(spaceAction()?.action)" @click="resolveSpaceAction('pay')" :disabled="submitInFlight" class="rounded-xl bg-rose-400 px-3 py-3 text-sm font-black text-white disabled:opacity-50">Bayar</button>
-                    <button @click="resolveSpaceAction('skip')" :disabled="submitInFlight" class="rounded-xl bg-white/10 px-3 py-3 text-sm font-black disabled:opacity-50" x-text="spaceAction()?.action === 'buy_property' ? 'Lewati' : 'Selesai'"></button>
+                    <button x-show="['pay_tax','pay_special_tax','pay_rent','card_pay_bank','card_repair_assets','card_utility_rent','card_collect_players','card_choice_pay_or_draw'].includes(spaceAction()?.action)" @click="resolveSpaceAction('pay')" :disabled="submitInFlight" class="rounded-xl bg-rose-400 px-3 py-3 text-sm font-black text-white disabled:opacity-50">Bayar</button>
+                    <button x-show="spaceAction()?.action === 'card_choice_pay_or_draw'" @click="resolveSpaceAction('draw_chance')" :disabled="submitInFlight" class="rounded-xl bg-rose-400 px-3 py-3 text-sm font-black text-white disabled:opacity-50">Ambil Kesempatan</button>
+                    <button x-show="!['pay_tax','pay_special_tax','pay_rent','card_pay_bank','card_repair_assets','card_utility_rent','card_collect_players','card_choice_pay_or_draw'].includes(spaceAction()?.action)" @click="resolveSpaceAction('skip')" :disabled="submitInFlight" class="rounded-xl bg-white/10 px-3 py-3 text-sm font-black disabled:opacity-50" x-text="spaceAction()?.action === 'buy_property' ? 'Lewati' : 'Selesai'"></button>
                     <button x-show="spaceAction()?.action === 'buy_property'" @click="alert('Lelang dilakukan oleh Bank dari panel lelang.')" class="rounded-xl bg-amber-300 px-3 py-3 text-sm font-black text-slate-950">Lelang</button>
                 </div>
             </div>
@@ -354,6 +364,36 @@
             </div>
         </section>
 
+        <section x-show="jailCardTransfers.length" class="glass-card p-4">
+            <h2 class="mb-3 text-lg font-black">Penawaran Kartu Bebas Penjara</h2>
+            <div class="space-y-2">
+                <template x-for="transfer in jailCardTransfers" :key="transfer.id">
+                    <div class="rounded-2xl border border-purple-300/20 bg-purple-300/10 p-3">
+                        <p class="font-black" x-text="transfer.status === 'pending' && Number(transfer.to_player_id) === Number(player?.id) ? `${transfer.from_player_name} menawarkan kartu bebas penjara` : `Kartu bebas penjara: ${transfer.status}`"></p>
+                        <p class="text-sm text-slate-300">Harga <b x-text="money(transfer.amount)"></b></p>
+                        <div x-show="transfer.status === 'pending' && Number(transfer.to_player_id) === Number(player?.id)" class="mt-3 grid grid-cols-2 gap-2">
+                            <button @click="decideJailCardTransfer(transfer, true)" :disabled="submitInFlight" class="rounded-xl bg-emerald-400 px-3 py-2 text-sm font-black text-slate-950 disabled:opacity-50">Beli</button>
+                            <button @click="decideJailCardTransfer(transfer, false)" :disabled="submitInFlight" class="rounded-xl bg-white/10 px-3 py-2 text-sm font-black disabled:opacity-50">Tolak</button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </section>
+
+        <section x-show="Number(player?.jail_free_cards || 0) > 0 && game?.status !== 'finished'" class="glass-card p-4">
+            <h2 class="text-lg font-black">Kartu Bebas Penjara</h2>
+            <p class="mt-1 text-sm text-slate-400">Kamu punya <b x-text="player?.jail_free_cards || 0"></b> kartu. Bisa disimpan, dipakai saat penjara, atau dijual ke pemain lain seharga 3.000.</p>
+            <div class="mt-3 grid grid-cols-[1fr_auto] gap-2">
+                <select x-model.number="jailCardTargetId" class="rounded-xl border border-white/10 bg-slate-950/60 px-3 py-3 font-bold outline-none focus:border-purple-300">
+                    <option value="">Pilih pembeli</option>
+                    <template x-for="item in players.filter((item) => item.id !== player?.id && !item.is_bankrupt)" :key="item.id">
+                        <option :value="item.id" x-text="item.name"></option>
+                    </template>
+                </select>
+                <button @click="offerJailCardTransfer()" :disabled="submitInFlight || !jailCardTargetId" class="rounded-xl bg-purple-400 px-4 py-3 text-sm font-black text-white disabled:opacity-50">Jual</button>
+            </div>
+        </section>
+
         <section class="glass-card p-4">
             <h2 class="mb-3 text-lg font-black">Permintaan Terakhir</h2>
             <div class="space-y-2">
@@ -380,6 +420,8 @@
             properties: [],
             transactions: [],
             requests: [],
+            jailCardTransfers: [],
+            jailCardTargetId: '',
             submitInFlight: false,
             rentPreview: null,
             dice: {
@@ -419,6 +461,7 @@
                 this.properties = payload.properties || [];
                 this.transactions = payload.transactions || [];
                 this.requests = payload.requests || [];
+                this.jailCardTransfers = payload.jail_card_transfers || [];
                 this.loading = false;
                 this.connectRealtime(this.game?.id);
                 this.$nextTick(() => window.lucide?.createIcons());
@@ -672,6 +715,57 @@
                         alert(payload.message || 'Aksi petak belum bisa diselesaikan.');
                         return;
                     }
+                    await this.fetchState(true);
+                } finally {
+                    this.submitInFlight = false;
+                }
+            },
+            async decideJailCardTransfer(transfer, approve) {
+                if (this.submitInFlight) {
+                    return;
+                }
+
+                if (approve && !confirm(`Beli kartu bebas penjara dari ${transfer.from_player_name} seharga ${this.money(transfer.amount)}?`)) {
+                    return;
+                }
+
+                this.submitInFlight = true;
+                try {
+                    const response = await fetch(`${this.basePath()}/api/player/${this.token}/jail-card-transfers/${transfer.id}`, {
+                        method: 'POST',
+                        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ approve }),
+                    });
+                    const payload = await response.json();
+                    if (!response.ok) {
+                        alert(payload.message || 'Penawaran kartu belum bisa diproses.');
+                        return;
+                    }
+                    alert(payload.message);
+                    await this.fetchState(true);
+                } finally {
+                    this.submitInFlight = false;
+                }
+            },
+            async offerJailCardTransfer() {
+                if (this.submitInFlight || !this.jailCardTargetId) {
+                    return;
+                }
+
+                this.submitInFlight = true;
+                try {
+                    const response = await fetch(`${this.basePath()}/api/player/${this.token}/jail-card-transfers`, {
+                        method: 'POST',
+                        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ to_player_id: this.jailCardTargetId }),
+                    });
+                    const payload = await response.json();
+                    if (!response.ok) {
+                        alert(payload.message || 'Penawaran belum bisa dikirim.');
+                        return;
+                    }
+                    this.jailCardTargetId = '';
+                    alert(payload.message);
                     await this.fetchState(true);
                 } finally {
                     this.submitInFlight = false;

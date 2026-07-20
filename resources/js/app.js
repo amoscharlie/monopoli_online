@@ -953,16 +953,23 @@ window.monopolyBank = () => ({
     },
 
     async drawRandomCard(deck = null) {
-        const available = this.cardActions.filter((action) => (!deck || action.deck === deck) && !this.isCardUsed(action));
-        if (!available.length) {
-            this.toast('Semua kartu di pilihan ini sudah dipakai. Klik Acak Ulang Kartu dulu.', 'error');
+        if (!this.current?.game?.id || !this.lastScannedPlayer()) {
+            this.toast('Pilih pemain dulu sebelum ambil kartu.', 'error');
             this.playSound('error');
             return;
         }
 
-        const action = available[Math.floor(Math.random() * available.length)];
-        this.toast(`${action.deck}: ${action.label}`, 'success');
-        await this.runCardAction(action);
+        const chosenDeck = deck || (Math.random() > 0.5 ? 'Dana Umum' : 'Kesempatan');
+        const payload = await this.api(`/api/games/${this.current.game.id}/cards/draw`, {
+            method: 'POST',
+            body: JSON.stringify({
+                player_id: this.lastScannedPlayer().id,
+                deck: chosenDeck,
+            }),
+        });
+        this.applyState(payload.state);
+        this.toast(payload.message, 'success');
+        this.playSound(chosenDeck === 'Dana Umum' ? 'commission' : 'transfer');
     },
 
     async toggleMusic() {

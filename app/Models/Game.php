@@ -88,4 +88,14 @@ class Game extends Model
     {
         return $this->hasMany(DiceRoll::class)->latest();
     }
+
+    public function cardDraws(): HasMany
+    {
+        return $this->hasMany(GameCardDraw::class)->latest();
+    }
+
+    public function jailFreeCardTransfers(): HasMany
+    {
+        return $this->hasMany(JailFreeCardTransfer::class)->latest();
+    }
 }
