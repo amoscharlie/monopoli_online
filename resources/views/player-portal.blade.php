@@ -6,6 +6,15 @@
     <title>HP Pemain - {{ $playerName }}</title>
     <script src="https://unpkg.com/lucide@latest"></script>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
+    <style>
+        @keyframes dice-tumble {
+            0% { transform: rotate(0deg) scale(1); }
+            35% { transform: rotate(7deg) scale(.94); }
+            70% { transform: rotate(-7deg) scale(1.04); }
+            100% { transform: rotate(0deg) scale(1); }
+        }
+        .dice-tumble { animation: dice-tumble .24s ease-in-out infinite; }
+    </style>
 </head>
 <body
     x-data="playerPortal('{{ $token }}')"
@@ -25,6 +34,7 @@
                 </div>
                 <span class="grid h-14 w-14 place-items-center rounded-2xl text-xl font-black text-slate-950" :style="`background:${player?.avatar_color || '#10b981'}`" x-text="(player?.name || '?').slice(0,1).toUpperCase()"></span>
             </div>
+            <p x-show="connectionMessage" class="mt-3 rounded-xl bg-amber-300/10 p-2 text-xs font-bold text-amber-200" x-text="connectionMessage"></p>
         </header>
 
         <section class="grid grid-cols-2 gap-3">
@@ -139,6 +149,8 @@
             </div>
         </section>
 
+        {{-- Transaksi manual dipusatkan di layar Bank agar HP pemain fokus pada giliran dan keuangan. --}}
+        {{--
         <section x-show="game?.status !== 'finished'" x-data="{ manualOpen: false }" class="glass-card order-[90] p-4">
             <div class="mb-3 flex items-center justify-between">
                 <div>
@@ -261,6 +273,23 @@
                 </button>
             </div>
         </section>
+        --}}
+
+        <section x-show="game?.status !== 'finished' && player?.is_in_jail" class="glass-card border-rose-300/20 bg-rose-300/10 p-4">
+            <div class="flex items-start gap-3">
+                <span class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-rose-400 text-white"><i data-lucide="lock-keyhole" class="h-6 w-6"></i></span>
+                <div>
+                    <p class="text-xs font-black uppercase tracking-[0.18em] text-rose-200">Status Penjara</p>
+                    <h2 class="mt-1 text-xl font-black">Kamu sedang di penjara</h2>
+                    <p class="mt-1 text-sm text-slate-300">Tetap tunggu giliran. Kamu bisa keluar dengan double, bayar 5.000 melalui Bank, atau pakai kartu milikmu sendiri.</p>
+                </div>
+            </div>
+            <div class="mt-4 grid grid-cols-2 gap-2">
+                <button @click="requestJailAction('pay_jail_fee')" :disabled="submitInFlight || hasPendingType('pay_jail_fee') || player?.pending_jail_release" class="min-h-11 rounded-xl bg-amber-300 px-3 py-2 text-sm font-black text-slate-950 disabled:opacity-50">Minta Bayar 5.000</button>
+                <button @click="useJailCardNow()" :disabled="submitInFlight || Number(player?.jail_free_cards || 0) <= 0 || player?.pending_jail_release" class="min-h-11 rounded-xl bg-purple-400 px-3 py-2 text-sm font-black text-white disabled:opacity-50">Pakai Kartu Sendiri</button>
+            </div>
+            <p x-show="player?.pending_jail_release" class="mt-3 rounded-xl bg-emerald-300/10 p-3 text-sm font-black text-emerald-200">Sudah siap bebas. Pada giliran berikutnya kamu langsung keluar lalu menjalankan dadu.</p>
+        </section>
 
         <section x-show="game?.status !== 'finished' && player?.current_space" class="glass-card p-4">
             <div class="flex items-start justify-between gap-3">
@@ -279,6 +308,15 @@
                 <p class="text-xs font-black uppercase tracking-[0.16em] text-blue-300" x-text="spaceAction()?.label"></p>
                 <h3 class="mt-1 text-xl font-black" x-text="spaceAction()?.space_name"></h3>
                 <p class="mt-1 text-sm text-slate-300" x-text="spaceAction()?.message"></p>
+                <div x-show="spaceAction()?.action_deadline_at" class="mt-3">
+                    <div class="mb-1 flex items-center justify-between text-xs font-bold" :class="spaceAction()?.is_expired ? 'text-rose-200' : 'text-slate-300'">
+                        <span x-text="spaceAction()?.is_expired ? 'Waktu habis - minta bantuan Bank' : 'Waktu untuk menyelesaikan aksi'"></span>
+                        <span x-text="`${actionCountdownSeconds()} detik`"></span>
+                    </div>
+                    <div class="h-2 overflow-hidden rounded-full bg-slate-950/60">
+                        <div class="h-full rounded-full transition-all duration-1000" :class="spaceAction()?.is_expired ? 'bg-rose-400' : 'bg-blue-400'" :style="`width:${actionCountdownPercent()}%`"></div>
+                    </div>
+                </div>
                 <div x-show="spaceAction()?.action === 'own_property'" class="mt-3 rounded-2xl border border-white/10 bg-slate-950/40 p-3 text-xs text-slate-300">
                     <p class="font-black text-slate-100">Detail properti milikmu</p>
                     <p class="mt-1">Rumah saat ini: <b x-text="spaceAction()?.house_count || 0"></b> / 4 · Hotel: <b x-text="spaceAction()?.has_hotel ? 1 : 0"></b></p>
@@ -302,7 +340,7 @@
                     <button @click="form.source = 'cash'" :class="form.source === 'cash' ? 'bg-blue-400 text-slate-950' : 'bg-white/10'" class="rounded-xl px-3 py-3 text-sm font-black">Uang Tunai</button>
                 </div>
 
-                <div x-show="spaceAction()?.amount > actionAvailableMoney()" class="mt-3 rounded-2xl border border-amber-300/20 bg-amber-300/10 p-3">
+                <div x-show="['pay_tax','pay_special_tax','pay_rent','card_pay_bank','card_repair_assets','card_utility_rent','card_choice_pay_or_draw'].includes(spaceAction()?.action) && spaceAction()?.amount > actionAvailableMoney()" class="mt-3 rounded-2xl border border-amber-300/20 bg-amber-300/10 p-3">
                     <p class="text-sm font-black text-amber-200">Uang yang dipilih kurang. Saran jual aset:</p>
                     <div class="mt-2 space-y-2">
                         <template x-for="(plan, index) in actionSaleRecommendations()" :key="index">
@@ -316,18 +354,22 @@
                         </template>
                         <p x-show="actionSaleRecommendations().length === 0" class="text-xs text-slate-400">Kalau semua aset tetap kurang, pemain harus bangkrut.</p>
                     </div>
+                    <button @click="openBankruptcyModal()" :disabled="submitInFlight" class="mt-3 min-h-11 w-full rounded-xl border border-rose-300/30 bg-rose-400/15 px-3 py-2 text-sm font-black text-rose-100 disabled:opacity-50">
+                        Pilih Bangkrut
+                    </button>
                 </div>
 
                 <div class="mt-4 grid gap-2" :class="['buy_property','own_property','card_choice_pay_or_draw'].includes(spaceAction()?.action) ? 'grid-cols-3' : 'grid-cols-2'">
-                    <button x-show="spaceAction()?.action === 'buy_property'" @click="resolveSpaceAction('buy')" :disabled="submitInFlight" class="rounded-xl bg-emerald-400 px-3 py-3 text-sm font-black text-slate-950 disabled:opacity-50">Beli</button>
-                    <button x-show="spaceAction()?.action === 'own_property'" @click="resolveSpaceAction('add_house')" :disabled="submitInFlight || !spaceAction()?.can_buy_house" class="rounded-xl bg-emerald-400 px-3 py-3 text-sm font-black text-slate-950 disabled:opacity-50">Beli Rumah</button>
-                    <button x-show="spaceAction()?.action === 'own_property'" @click="resolveSpaceAction('add_hotel')" :disabled="submitInFlight || !spaceAction()?.can_buy_hotel" class="rounded-xl bg-purple-400 px-3 py-3 text-sm font-black text-white disabled:opacity-50">Beli Hotel</button>
-                    <button x-show="spaceAction()?.action === 'own_property'" @click="resolveSpaceAction('sell_house')" :disabled="submitInFlight || !spaceAction()?.can_sell_house" class="rounded-xl bg-amber-300 px-3 py-3 text-sm font-black text-slate-950 disabled:opacity-50">Jual 1 Rumah (1/2)</button>
-                    <button x-show="spaceAction()?.action === 'own_property'" @click="resolveSpaceAction('sell_hotel')" :disabled="submitInFlight || !spaceAction()?.can_sell_hotel" class="rounded-xl bg-amber-300 px-3 py-3 text-sm font-black text-slate-950 disabled:opacity-50">Jual Hotel (1/2)</button>
-                    <button x-show="['pay_tax','pay_special_tax','pay_rent','card_pay_bank','card_repair_assets','card_utility_rent','card_collect_players','card_choice_pay_or_draw'].includes(spaceAction()?.action)" @click="resolveSpaceAction('pay')" :disabled="submitInFlight" class="rounded-xl bg-rose-400 px-3 py-3 text-sm font-black text-white disabled:opacity-50">Bayar</button>
-                    <button x-show="spaceAction()?.action === 'card_choice_pay_or_draw'" @click="resolveSpaceAction('draw_chance')" :disabled="submitInFlight" class="rounded-xl bg-rose-400 px-3 py-3 text-sm font-black text-white disabled:opacity-50">Ambil Kesempatan</button>
-                    <button x-show="!['pay_tax','pay_special_tax','pay_rent','card_pay_bank','card_repair_assets','card_utility_rent','card_collect_players','card_choice_pay_or_draw'].includes(spaceAction()?.action)" @click="resolveSpaceAction('skip')" :disabled="submitInFlight" class="rounded-xl bg-white/10 px-3 py-3 text-sm font-black disabled:opacity-50" x-text="spaceAction()?.action === 'buy_property' ? 'Lewati' : 'Selesai'"></button>
-                    <button x-show="spaceAction()?.action === 'buy_property'" @click="alert('Lelang dilakukan oleh Bank dari panel lelang.')" class="rounded-xl bg-amber-300 px-3 py-3 text-sm font-black text-slate-950">Lelang</button>
+                    <button x-show="spaceAction()?.action === 'buy_property'" @click="resolveSpaceAction('buy')" :disabled="submitInFlight || spaceAction()?.is_expired" class="rounded-xl bg-emerald-400 px-3 py-3 text-sm font-black text-slate-950 disabled:opacity-50">Beli</button>
+                    <button x-show="spaceAction()?.action === 'own_property'" @click="resolveSpaceAction('add_house')" :disabled="submitInFlight || spaceAction()?.is_expired || !spaceAction()?.can_buy_house" class="rounded-xl bg-emerald-400 px-3 py-3 text-sm font-black text-slate-950 disabled:opacity-50">Beli Rumah</button>
+                    <button x-show="spaceAction()?.action === 'own_property'" @click="resolveSpaceAction('add_hotel')" :disabled="submitInFlight || spaceAction()?.is_expired || !spaceAction()?.can_buy_hotel" class="rounded-xl bg-purple-400 px-3 py-3 text-sm font-black text-white disabled:opacity-50">Beli Hotel</button>
+                    <button x-show="spaceAction()?.action === 'own_property'" @click="resolveSpaceAction('sell_house')" :disabled="submitInFlight || spaceAction()?.is_expired || !spaceAction()?.can_sell_house" class="rounded-xl bg-amber-300 px-3 py-3 text-sm font-black text-slate-950 disabled:opacity-50">Jual 1 Rumah (1/2)</button>
+                    <button x-show="spaceAction()?.action === 'own_property'" @click="resolveSpaceAction('sell_hotel')" :disabled="submitInFlight || spaceAction()?.is_expired || !spaceAction()?.can_sell_hotel" class="rounded-xl bg-amber-300 px-3 py-3 text-sm font-black text-slate-950 disabled:opacity-50">Jual Hotel (1/2)</button>
+                    <button x-show="['pay_tax','pay_special_tax','pay_rent','card_pay_bank','card_repair_assets','card_utility_rent','card_choice_pay_or_draw'].includes(spaceAction()?.action)" @click="resolveSpaceAction('pay')" :disabled="submitInFlight || spaceAction()?.is_expired" class="rounded-xl bg-rose-400 px-3 py-3 text-sm font-black text-white disabled:opacity-50">Bayar</button>
+                    <button x-show="spaceAction()?.action === 'card_collect_players'" @click="resolveSpaceAction('pay')" :disabled="submitInFlight || spaceAction()?.is_expired" class="rounded-xl bg-emerald-400 px-3 py-3 text-sm font-black text-slate-950 disabled:opacity-50">Terima dari Semua Pemain</button>
+                    <button x-show="spaceAction()?.action === 'card_choice_pay_or_draw'" @click="resolveSpaceAction('draw_chance')" :disabled="submitInFlight || spaceAction()?.is_expired" class="rounded-xl bg-rose-400 px-3 py-3 text-sm font-black text-white disabled:opacity-50">Ambil Kesempatan</button>
+                    <button x-show="!['pay_tax','pay_special_tax','pay_rent','card_pay_bank','card_repair_assets','card_utility_rent','card_collect_players','card_choice_pay_or_draw'].includes(spaceAction()?.action)" @click="resolveSpaceAction('skip')" :disabled="submitInFlight || spaceAction()?.is_expired" class="rounded-xl bg-white/10 px-3 py-3 text-sm font-black disabled:opacity-50" x-text="spaceAction()?.action === 'buy_property' ? 'Lewati' : 'Selesai'"></button>
+                    <button x-show="spaceAction()?.action === 'buy_property'" @click="alert('Datang ke Bank jika semua pemain sepakat memulai lelang manual.')" :disabled="spaceAction()?.is_expired" class="rounded-xl bg-amber-300 px-3 py-3 text-sm font-black text-slate-950 disabled:opacity-50">Lelang</button>
                 </div>
             </div>
 
@@ -343,22 +385,37 @@
                     <h2 class="text-lg font-black" x-text="isMyTurn() ? 'Giliran Kamu' : `Menunggu ${game?.current_turn_player?.name || 'giliran'}`"></h2>
                     <p class="text-sm text-slate-400">Kocok dari HP, hasilnya langsung tampil di Bank dan Live View.</p>
                 </div>
-                <button @click="rollDice()" :disabled="!isMyTurn() || dice.rolling || loading" class="rounded-2xl bg-purple-400 px-4 py-3 font-black text-slate-950 transition hover:bg-purple-300 disabled:opacity-50">Kocok</button>
+                <button @click="rollDice()" :disabled="!isMyTurn() || dice.rolling || loading || player?.pending_space_action" class="min-h-11 rounded-2xl bg-purple-400 px-4 py-3 font-black text-slate-950 transition hover:bg-purple-300 disabled:opacity-50">Kocok</button>
+            </div>
+            <div x-show="isMyTurn() && turnCountdownSeconds() !== null" class="mt-4">
+                <div class="mb-1 flex items-center justify-between text-xs font-bold text-purple-200">
+                    <span>Jika waktu habis, kamu diam dan giliran dilewati</span>
+                    <span x-text="`${turnCountdownSeconds()} detik`"></span>
+                </div>
+                <div class="h-2 overflow-hidden rounded-full bg-slate-950/60">
+                    <div class="h-full rounded-full bg-purple-400 transition-all duration-1000" :style="`width:${turnCountdownPercent()}%`"></div>
+                </div>
             </div>
             <div class="mt-4 grid grid-cols-3 items-center gap-3">
-                <div class="grid aspect-square place-items-center rounded-3xl border border-white/10 bg-white/10 text-5xl font-black" :class="dice.rolling ? 'animate-pulse' : ''" x-text="lastRoll()?.dice_one || dice.first"></div>
-                <div class="grid aspect-square place-items-center rounded-3xl border border-white/10 bg-white/10 text-5xl font-black" :class="dice.rolling ? 'animate-pulse' : ''" x-text="lastRoll()?.dice_two || dice.second"></div>
+                <div class="grid aspect-square place-items-center rounded-3xl border border-white/10 bg-white/10 text-5xl font-black" :class="dice.rolling ? 'dice-tumble border-purple-300/50 bg-purple-300/10' : ''" x-text="displayedDice('dice_one', dice.first)"></div>
+                <div class="grid aspect-square place-items-center rounded-3xl border border-white/10 bg-white/10 text-5xl font-black" :class="dice.rolling ? 'dice-tumble border-blue-300/50 bg-blue-300/10' : ''" x-text="displayedDice('dice_two', dice.second)"></div>
                 <div class="rounded-3xl border border-emerald-300/20 bg-emerald-300/10 p-4 text-center">
                     <p class="text-xs font-black uppercase tracking-[0.14em] text-emerald-200">Total</p>
-                    <p class="text-4xl font-black text-emerald-300" x-text="lastRoll()?.total || (dice.first + dice.second)"></p>
+                    <p class="text-4xl font-black text-emerald-300" x-text="displayedDice('total', dice.first + dice.second)"></p>
                     <p x-show="lastRoll()?.is_double" class="mt-1 text-xs font-black text-amber-200">Double</p>
                     <p x-show="lastRoll()?.result === 'go_to_jail'" class="mt-1 text-xs font-black text-rose-200">Masuk penjara</p>
                 </div>
             </div>
+            <p x-show="lastTurnWasSkipped()" x-text="game?.turn?.last_event?.description" class="mt-3 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-sm font-bold text-amber-100"></p>
         </section>
 
         <section class="glass-card p-4">
-            <h2 class="mb-3 text-lg font-black">Tanah Saya</h2>
+            <div class="mb-3 flex items-center justify-between gap-3">
+                <div>
+                    <h2 class="text-lg font-black">Tanah & Aset Saya</h2>
+                    <p class="text-xs text-slate-400">Harga jual selalu setengah dari harga beli. Penjualan tetap diperiksa Bank.</p>
+                </div>
+            </div>
             <div class="space-y-2">
                 <template x-for="property in player?.properties || []" :key="property.id">
                     <div class="rounded-xl bg-white/5 p-3">
@@ -375,9 +432,24 @@
                             <span>Jual tanah: <b x-text="money(Math.floor((property.price || 0) / 2))"></b></span>
                             <span>Sewa: <b x-text="money(property.current_rent)"></b></span>
                         </div>
+                        <div x-show="game?.status === 'active' && !player?.is_bankrupt" class="mt-3 grid grid-cols-2 gap-2">
+                            <button x-show="Number(property.house_count || 0) > 0 && !property.has_hotel" @click="submitBulkSellPlan(manualSalePlan(property, 'sell_house'))" :disabled="submitInFlight || hasPendingType('bulk_sell_assets')" class="min-h-11 rounded-xl bg-amber-300 px-2 py-2 text-xs font-black text-slate-950 disabled:opacity-50">Jual 1 Rumah</button>
+                            <button x-show="property.has_hotel" @click="submitBulkSellPlan(manualSalePlan(property, 'sell_hotel'))" :disabled="submitInFlight || hasPendingType('bulk_sell_assets')" class="min-h-11 rounded-xl bg-purple-400 px-2 py-2 text-xs font-black text-white disabled:opacity-50">Jual Hotel</button>
+                            <button x-show="Number(property.house_count || 0) === 0 && !property.has_hotel" @click="submitBulkSellPlan(manualSalePlan(property, 'sell_property'))" :disabled="submitInFlight || hasPendingType('bulk_sell_assets')" class="col-span-2 min-h-11 rounded-xl bg-rose-400 px-2 py-2 text-xs font-black text-white disabled:opacity-50">Jual Tanah ke Bank</button>
+                        </div>
                     </div>
                 </template>
                 <p x-show="!player?.properties?.length" class="py-4 text-center text-sm text-slate-400">Belum punya tanah.</p>
+            </div>
+        </section>
+
+        <section x-show="game?.status === 'active' && !player?.is_bankrupt" class="glass-card border border-rose-300/20 p-4">
+            <div class="flex items-center justify-between gap-4">
+                <div>
+                    <h2 class="font-black text-rose-200">Tidak Bisa Melanjutkan?</h2>
+                    <p class="mt-1 text-xs text-slate-400">Bangkrut mengembalikan seluruh aset ke Bank dan langsung mengakhiri permainanmu.</p>
+                </div>
+                <button @click="openBankruptcyModal()" :disabled="submitInFlight" class="min-h-11 shrink-0 rounded-xl bg-rose-500 px-4 py-3 text-sm font-black text-white disabled:opacity-50">Bangkrut</button>
             </div>
         </section>
 
@@ -427,6 +499,37 @@
         </section>
     </main>
 
+    <div x-show="bankruptcyModal.open" x-transition.opacity class="fixed inset-0 z-50 grid place-items-end bg-slate-950/85 p-3 backdrop-blur-sm sm:place-items-center" @keydown.escape.window="closeBankruptcyModal()">
+        <div @click.outside="closeBankruptcyModal()" class="w-full max-w-lg rounded-3xl border border-rose-300/20 bg-slate-900 p-5 shadow-2xl">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-xs font-black uppercase tracking-[0.2em] text-rose-300">Konfirmasi Terakhir</p>
+                    <h2 class="mt-1 text-2xl font-black">Nyatakan Bangkrut?</h2>
+                </div>
+                <button @click="closeBankruptcyModal()" class="grid h-11 w-11 place-items-center rounded-xl bg-white/10" aria-label="Tutup"><i data-lucide="x" class="h-5 w-5"></i></button>
+            </div>
+            <p class="mt-3 text-sm text-slate-300">Semua tanah, rumah, dan hotel dijual ke Bank dengan harga setengah. Keputusan ini tidak dapat dibatalkan.</p>
+
+            <div x-show="bankruptcyModal.loading" class="mt-4 rounded-2xl bg-white/5 p-4 text-sm text-slate-300">Menghitung seluruh aset...</div>
+            <div x-show="!bankruptcyModal.loading && bankruptcyModal.summary" class="mt-4 space-y-3">
+                <div class="grid grid-cols-2 gap-2 text-sm">
+                    <div class="rounded-xl bg-white/5 p-3"><p class="text-slate-400">Uang bank + tunai</p><p class="font-black" x-text="money(bankruptcyModal.summary?.liquid_balance)"></p></div>
+                    <div class="rounded-xl bg-white/5 p-3"><p class="text-slate-400">Hasil jual aset</p><p class="font-black text-amber-300" x-text="money(bankruptcyModal.summary?.sale_total)"></p></div>
+                    <div class="rounded-xl bg-white/5 p-3"><p class="text-slate-400">Tanah / Rumah / Hotel</p><p class="font-black" x-text="`${bankruptcyModal.summary?.property_count || 0} / ${bankruptcyModal.summary?.house_count || 0} / ${bankruptcyModal.summary?.hotel_count || 0}`"></p></div>
+                    <div class="rounded-xl bg-rose-400/10 p-3"><p class="text-rose-200">Total likuidasi</p><p class="font-black text-rose-300" x-text="money(bankruptcyModal.summary?.total_liquidation)"></p></div>
+                </div>
+                <div x-show="bankruptcyModal.summary?.settlement" class="rounded-2xl border border-rose-300/20 bg-rose-400/10 p-3 text-sm text-rose-100">
+                    Seluruh hasil likuidasi <b x-text="money(bankruptcyModal.summary?.settlement?.payable_to_owner)"></b> akan dibayarkan kepada <b x-text="bankruptcyModal.summary?.settlement?.creditor_name"></b> karena sewa <b x-text="bankruptcyModal.summary?.settlement?.property_name"></b>.
+                </div>
+            </div>
+
+            <div class="mt-5 grid grid-cols-2 gap-2">
+                <button @click="closeBankruptcyModal()" :disabled="bankruptcyModal.submitting" class="min-h-11 rounded-xl bg-white/10 px-4 py-3 font-black disabled:opacity-50">Batal</button>
+                <button @click="confirmBankruptcy()" :disabled="bankruptcyModal.loading || bankruptcyModal.submitting || !bankruptcyModal.summary" class="min-h-11 rounded-xl bg-rose-500 px-4 py-3 font-black text-white disabled:opacity-50" x-text="bankruptcyModal.submitting ? 'Memproses...' : 'Ya, Saya Bangkrut'"></button>
+            </div>
+        </div>
+    </div>
+
     <script>
         window.playerPortal = (token) => ({
             token,
@@ -440,7 +543,18 @@
             jailCardTransfers: [],
             jailCardTargetId: '',
             submitInFlight: false,
+            stateRequestInFlight: false,
+            stateRefreshQueued: false,
+            automationInFlight: false,
+            now: Date.now(),
+            connectionMessage: '',
             rentPreview: null,
+            bankruptcyModal: {
+                open: false,
+                loading: false,
+                submitting: false,
+                summary: null,
+            },
             dice: {
                 first: 1,
                 second: 1,
@@ -465,23 +579,47 @@
                     if (!this.realtime.connected) {
                         this.fetchState(true);
                     }
-                }, 2500);
+                }, 4000);
+                setInterval(() => {
+                    this.now = Date.now();
+                    this.maybeRunAutomation().catch(() => {});
+                }, 1000);
                 this.$nextTick(() => window.lucide?.createIcons());
             },
             async fetchState(silent = false) {
+                if (this.stateRequestInFlight) {
+                    this.stateRefreshQueued = true;
+                    return;
+                }
+
+                this.stateRequestInFlight = true;
                 this.loading = !silent;
-                const response = await fetch(`${this.basePath()}/api/player/${this.token}/state`, { headers: { Accept: 'application/json' } });
-                const payload = await response.json();
-                this.game = payload.game;
-                this.player = payload.player;
-                this.players = payload.players || [];
-                this.properties = payload.properties || [];
-                this.transactions = payload.transactions || [];
-                this.requests = payload.requests || [];
-                this.jailCardTransfers = payload.jail_card_transfers || [];
-                this.loading = false;
-                this.connectRealtime(this.game?.id);
-                this.$nextTick(() => window.lucide?.createIcons());
+                try {
+                    const response = await fetch(`${this.basePath()}/api/player/${this.token}/state`, { headers: { Accept: 'application/json' } });
+                    if (!response.ok) {
+                        throw new Error('Koneksi Bank sedang lambat.');
+                    }
+                    const payload = await response.json();
+                    this.game = payload.game;
+                    this.player = payload.player;
+                    this.players = payload.players || [];
+                    this.properties = payload.properties || [];
+                    this.transactions = payload.transactions || [];
+                    this.requests = payload.requests || [];
+                    this.jailCardTransfers = payload.jail_card_transfers || [];
+                    this.connectionMessage = '';
+                    this.connectRealtime(this.game?.id);
+                    this.$nextTick(() => window.lucide?.createIcons());
+                } catch (error) {
+                    this.connectionMessage = 'Koneksi Bank sedang lambat. Data akan dicoba lagi otomatis.';
+                } finally {
+                    this.loading = false;
+                    this.stateRequestInFlight = false;
+                    if (this.stateRefreshQueued) {
+                        this.stateRefreshQueued = false;
+                        queueMicrotask(() => this.fetchState(true));
+                    }
+                }
             },
             connectRealtime(gameId) {
                 if (!gameId || this.realtime.gameId === gameId) {
@@ -518,6 +656,68 @@
                         .listen('.game.updated', () => this.fetchState(true));
                 } catch (error) {
                     this.realtime.connected = false;
+                }
+            },
+            globalPendingAction() {
+                return this.players.find((item) => item.pending_space_action)?.pending_space_action || null;
+            },
+            turnCountdownSeconds() {
+                const deadline = this.game?.turn?.deadline_at;
+                if (!deadline || this.globalPendingAction() || this.game?.status !== 'active') {
+                    return null;
+                }
+
+                return Math.max(0, Math.ceil((new Date(deadline).getTime() - this.now) / 1000));
+            },
+            turnCountdownPercent() {
+                const remaining = this.turnCountdownSeconds();
+                const total = Number(this.game?.turn?.timeout_seconds || 20);
+
+                return remaining === null ? 0 : Math.max(0, Math.min(100, (remaining / total) * 100));
+            },
+            actionCountdownSeconds() {
+                const deadline = this.spaceAction()?.action_deadline_at;
+                if (!deadline) {
+                    return 0;
+                }
+
+                return Math.max(0, Math.ceil((new Date(deadline).getTime() - this.now) / 1000));
+            },
+            actionCountdownPercent() {
+                const total = Number(this.spaceAction()?.timeout_seconds || 60);
+
+                return Math.max(0, Math.min(100, (this.actionCountdownSeconds() / total) * 100));
+            },
+            automationDue() {
+                if (!this.game?.id || this.game.status !== 'active' || this.automationInFlight) {
+                    return false;
+                }
+
+                const action = this.globalPendingAction();
+                if (action?.action_deadline_at) {
+                    return new Date(action.action_deadline_at).getTime() <= this.now && !action.expired_at;
+                }
+
+                const deadline = this.game?.turn?.deadline_at;
+                return Boolean(deadline && new Date(deadline).getTime() <= this.now);
+            },
+            async maybeRunAutomation() {
+                if (!this.automationDue()) {
+                    return;
+                }
+
+                this.automationInFlight = true;
+                try {
+                    const response = await fetch(`${this.basePath()}/api/games/${this.game.id}/automation/tick`, {
+                        method: 'POST',
+                        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+                        body: JSON.stringify({}),
+                    });
+                    if (response.ok) {
+                        await this.fetchState(true);
+                    }
+                } finally {
+                    this.automationInFlight = false;
                 }
             },
             async submitRequest() {
@@ -708,6 +908,84 @@
                     this.submitInFlight = false;
                 }
             },
+            manualSalePlan(property, type) {
+                const values = {
+                    sell_house: Math.floor(Number(property?.house_price || 0) / 2),
+                    sell_hotel: Math.floor(Number(property?.hotel_price || 0) / 2),
+                    sell_property: Math.floor(Number(property?.price || 0) / 2),
+                };
+                const labels = {
+                    sell_house: `Jual 1 rumah di ${property?.name}`,
+                    sell_hotel: `Jual hotel di ${property?.name}`,
+                    sell_property: `Jual tanah ${property?.name}`,
+                };
+
+                return {
+                    items: [labels[type]],
+                    total: values[type],
+                    operations: [{ type, game_property_id: property?.id, quantity: 1 }],
+                };
+            },
+            async openBankruptcyModal() {
+                if (this.player?.is_bankrupt || this.game?.status !== 'active' || this.submitInFlight) {
+                    return;
+                }
+
+                this.bankruptcyModal.open = true;
+                this.bankruptcyModal.loading = true;
+                this.bankruptcyModal.summary = null;
+                this.$nextTick(() => window.lucide?.createIcons());
+                try {
+                    const response = await fetch(`${this.basePath()}/api/player/${this.token}/bankruptcy-preview`, {
+                        headers: { Accept: 'application/json' },
+                    });
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        alert(payload.message || 'Rincian bangkrut belum bisa dihitung.');
+                        this.bankruptcyModal.open = false;
+                        return;
+                    }
+                    this.bankruptcyModal.summary = payload.summary;
+                } catch (error) {
+                    alert('Koneksi ke Bank sedang lambat. Coba buka konfirmasi sekali lagi.');
+                    this.bankruptcyModal.open = false;
+                } finally {
+                    this.bankruptcyModal.loading = false;
+                }
+            },
+            closeBankruptcyModal() {
+                if (this.bankruptcyModal.submitting) {
+                    return;
+                }
+                this.bankruptcyModal.open = false;
+            },
+            async confirmBankruptcy() {
+                if (this.bankruptcyModal.submitting || !this.bankruptcyModal.summary) {
+                    return;
+                }
+
+                this.bankruptcyModal.submitting = true;
+                this.submitInFlight = true;
+                try {
+                    const response = await fetch(`${this.basePath()}/api/player/${this.token}/bankrupt`, {
+                        method: 'POST',
+                        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+                        body: JSON.stringify({}),
+                    });
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        alert(payload.message || 'Status bangkrut belum bisa diproses.');
+                        return;
+                    }
+                    this.bankruptcyModal.open = false;
+                    await this.fetchState(true);
+                } catch (error) {
+                    alert('Status belum tercatat. Periksa koneksi lalu coba sekali lagi.');
+                } finally {
+                    this.bankruptcyModal.submitting = false;
+                    this.submitInFlight = false;
+                }
+            },
             async requestJailAction(type) {
                 if (this.submitInFlight || this.hasPendingType(type)) {
                     return;
@@ -736,6 +1014,35 @@
                     this.submitInFlight = false;
                 }
             },
+            async useJailCardNow() {
+                if (this.submitInFlight || Number(this.player?.jail_free_cards || 0) <= 0) {
+                    return;
+                }
+
+                if (!confirm('Pakai satu kartu bebas penjara? Pada giliran berikutnya kamu langsung keluar lalu menjalankan dadu.')) {
+                    return;
+                }
+
+                this.submitInFlight = true;
+                try {
+                    const response = await fetch(`${this.basePath()}/api/player/${this.token}/use-jail-card`, {
+                        method: 'POST',
+                        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+                        body: JSON.stringify({}),
+                    });
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        alert(payload.message || 'Kartu belum bisa dipakai. Coba sekali lagi.');
+                        return;
+                    }
+                    alert(payload.message);
+                    await this.fetchState(true);
+                } catch (error) {
+                    alert('Kartu belum tercatat. Periksa koneksi lalu coba sekali lagi.');
+                } finally {
+                    this.submitInFlight = false;
+                }
+            },
             spaceAction() {
                 return this.player?.pending_space_action || null;
             },
@@ -745,8 +1052,16 @@
                     return;
                 }
 
-                const needsConfirm = ['pay_tax','pay_special_tax','pay_rent','buy_property','own_property'].includes(action.action);
-                if (needsConfirm && !confirm(`${action.label}: ${action.amount ? this.money(action.amount) : ''}\nLanjutkan?`)) {
+                if (action.is_expired) {
+                    alert('Waktu aksi sudah habis. Datang ke Bank agar pembayaran atau asetmu dibantu sampai selesai.');
+                    return;
+                }
+
+                const needsConfirm = ['pay_tax','pay_special_tax','pay_rent','buy_property','own_property','card_collect_players'].includes(action.action);
+                const confirmText = action.action === 'card_collect_players'
+                    ? `${action.label}\nTerima ${this.money(action.amount)} dari setiap pemain?`
+                    : `${action.label}: ${action.amount ? this.money(action.amount) : ''}\nLanjutkan?`;
+                if (needsConfirm && !confirm(confirmText)) {
                     return;
                 }
 
@@ -760,12 +1075,14 @@
                             source: this.form.source,
                         }),
                     });
-                    const payload = await response.json();
+                    const payload = await response.json().catch(() => ({}));
                     if (!response.ok) {
-                        alert(payload.message || 'Aksi petak belum bisa diselesaikan.');
+                        alert(payload.message || 'Aksi belum tersimpan. Coba tekan sekali lagi atau minta bantuan Bank.');
                         return;
                     }
                     await this.fetchState(true);
+                } catch (error) {
+                    alert('Aksi belum tersimpan karena koneksi lambat. Coba tekan sekali lagi.');
                 } finally {
                     this.submitInFlight = false;
                 }
@@ -877,11 +1194,13 @@
                             operation: { type: 'sell_hotel', game_property_id: property.id, quantity: 1 },
                         });
                     }
-                    items.push({
-                        label: `jual tanah ${property.name}`,
-                        value: Math.floor((property.price || 0) / 2),
-                        operation: { type: 'sell_property', game_property_id: property.id, quantity: 1 },
-                    });
+                    if (Number(property.house_count || 0) === 0 && !property.has_hotel) {
+                        items.push({
+                            label: `jual tanah ${property.name}`,
+                            value: Math.floor((property.price || 0) / 2),
+                            operation: { type: 'sell_property', game_property_id: property.id, quantity: 1 },
+                        });
+                    }
                     return items;
                 }).filter((item) => item.value > 0);
 
@@ -939,9 +1258,28 @@
             lastRoll() {
                 return this.game?.turn?.last_roll || null;
             },
+            lastTurnWasSkipped() {
+                return this.game?.turn?.last_event?.type === 'dice_timeout_skipped';
+            },
+            displayedDice(field, rollingValue) {
+                if (this.dice.rolling) {
+                    return rollingValue;
+                }
+
+                if (this.lastTurnWasSkipped()) {
+                    return '-';
+                }
+
+                return this.lastRoll()?.[field] ?? rollingValue;
+            },
             async rollDice() {
                 if (!this.isMyTurn()) {
                     alert('Belum giliran kamu.');
+                    return;
+                }
+
+                if (this.globalPendingAction()) {
+                    alert('Selesaikan aksi petak yang sedang terbuka dulu.');
                     return;
                 }
 
@@ -950,29 +1288,33 @@
                 }
 
                 this.dice.rolling = true;
-                let ticks = 0;
+                const animationStartedAt = performance.now();
                 const timer = setInterval(() => {
                     this.dice.first = Math.floor(Math.random() * 6) + 1;
                     this.dice.second = Math.floor(Math.random() * 6) + 1;
-                    ticks += 1;
-                    if (ticks >= 10) {
-                        clearInterval(timer);
-                    }
-                }, 70);
+                }, 85);
 
                 try {
                     const response = await fetch(`${this.basePath()}/api/player/${this.token}/roll-dice`, {
                         method: 'POST',
                         headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
                     });
-                    const payload = await response.json();
+                    const payload = await response.json().catch(() => ({}));
                     if (!response.ok) {
-                        alert(payload.message || 'Dadu belum bisa dikocok.');
+                        alert(payload.message || 'Dadu belum masuk. Coba kocok ulang satu kali.');
                         return;
                     }
+                    const animationRemaining = Math.max(0, 1100 - (performance.now() - animationStartedAt));
+                    if (animationRemaining > 0) {
+                        await new Promise((resolve) => setTimeout(resolve, animationRemaining));
+                    }
+                    clearInterval(timer);
                     this.dice.first = payload.roll.dice_one;
                     this.dice.second = payload.roll.dice_two;
+                    this.dice.rolling = false;
                     await this.fetchState(true);
+                } catch (error) {
+                    alert('Dadu belum masuk karena koneksi lambat. Coba kocok ulang satu kali.');
                 } finally {
                     clearInterval(timer);
                     this.dice.rolling = false;

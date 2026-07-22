@@ -22,6 +22,8 @@ Route::post('/games/{game}/finish', [GameController::class, 'finish']);
 Route::post('/games/{game}/cards/refresh', [GameController::class, 'refreshCards']);
 Route::post('/games/{game}/cards/draw', [GameController::class, 'drawCard']);
 Route::post('/games/{game}/first-player', [GameController::class, 'setFirstPlayer']);
+Route::post('/games/{game}/automation/tick', [GameController::class, 'automationTick']);
+Route::post('/games/{game}/space-action', [GameController::class, 'resolveSpaceAction']);
 Route::post('/games/{game}/requests/{requestId}/approve', [TransactionRequestController::class, 'approve']);
 Route::post('/games/{game}/requests/{requestId}/reject', [TransactionRequestController::class, 'reject']);
 
@@ -29,8 +31,11 @@ Route::get('/player/{token}/state', [PlayerPortalController::class, 'state']);
 Route::post('/player/{token}/requests', [PlayerPortalController::class, 'requestTransaction']);
 Route::post('/player/{token}/rent-preview', [PlayerPortalController::class, 'rentPreview']);
 Route::post('/player/{token}/pay-rent', [PlayerPortalController::class, 'payRent']);
+Route::get('/player/{token}/bankruptcy-preview', [PlayerPortalController::class, 'bankruptcyPreview']);
+Route::post('/player/{token}/bankrupt', [PlayerPortalController::class, 'bankrupt']);
 Route::post('/player/{token}/roll-dice', [PlayerPortalController::class, 'rollDice']);
 Route::post('/player/{token}/space-action', [PlayerPortalController::class, 'resolveSpaceAction']);
+Route::post('/player/{token}/use-jail-card', [PlayerPortalController::class, 'useJailCard']);
 Route::post('/player/{token}/jail-card-transfers/{transferId}', [PlayerPortalController::class, 'decideJailCardTransfer']);
 Route::post('/player/{token}/jail-card-transfers', [PlayerPortalController::class, 'offerJailCardTransfer']);
 

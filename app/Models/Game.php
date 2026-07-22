@@ -25,6 +25,7 @@ class Game extends Model
         'first_player_id',
         'current_turn_player_id',
         'turn_number',
+        'turn_started_at',
         'turn_order',
         'finish_summary',
     ];
@@ -34,6 +35,7 @@ class Game extends Model
         return [
             'started_at' => 'datetime',
             'ended_at' => 'datetime',
+            'turn_started_at' => 'datetime',
             'turn_order' => 'array',
             'finish_summary' => 'array',
         ];

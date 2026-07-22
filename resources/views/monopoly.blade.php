@@ -389,6 +389,14 @@
                                     <p class="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Giliran</p>
                                     <p class="font-black text-emerald-300" x-text="current.turn?.current_player?.name || '-'"></p>
                                     <p class="text-xs text-slate-400" x-text="diceStatusText()"></p>
+                                    <div x-show="turnCountdownSeconds() !== null" class="mt-2">
+                                        <div class="mb-1 flex justify-between text-[10px] font-bold text-slate-400">
+                                            <span>Diam jika habis</span><span x-text="`${turnCountdownSeconds()} dtk`"></span>
+                                        </div>
+                                        <div class="h-1.5 overflow-hidden rounded-full bg-slate-950/50">
+                                            <div class="h-full rounded-full bg-purple-400 transition-all duration-1000" :style="`width:${turnCountdownPercent()}%`"></div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             <div class="flex flex-wrap gap-2">
@@ -432,7 +440,7 @@
 
                     <div class="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)_360px]">
                         <aside class="space-y-3">
-                            <template x-for="player in current.players" :key="player.id">
+                            <template x-for="player in (current?.players || [])" :key="player.id">
                                 <article
                                     @click="selectActivePlayer(player)"
                                     class="glass-card player-card relative overflow-hidden p-4 transition"
@@ -609,6 +617,32 @@
                                         <p class="text-2xl font-black text-amber-200" x-text="pendingBoardAction()?.action?.amount ? money(pendingBoardAction()?.action?.amount) : 'Info'"></p>
                                     </div>
                                 </div>
+                                <div class="mt-4">
+                                    <div class="mb-1 flex items-center justify-between text-xs font-bold">
+                                        <span x-text="pendingBoardAction()?.action?.is_expired ? 'Waktu habis - Bank perlu membantu' : 'Waktu mengambil keputusan'"></span>
+                                        <span x-text="`${actionCountdownSeconds() ?? 0} detik`"></span>
+                                    </div>
+                                    <div class="h-2 overflow-hidden rounded-full bg-slate-950/50">
+                                        <div class="h-full rounded-full transition-all duration-1000" :class="pendingBoardAction()?.action?.is_expired ? 'bg-rose-400' : 'bg-amber-300'" :style="`width:${actionCountdownPercent()}%`"></div>
+                                    </div>
+                                </div>
+                                <div x-show="pendingBoardAction()?.action?.is_expired" class="mt-4 flex flex-wrap gap-2">
+                                    <button
+                                        x-show="['pay_tax','pay_special_tax','pay_rent','card_pay_bank','card_repair_assets','card_utility_rent','card_collect_players','card_choice_pay_or_draw'].includes(pendingBoardAction()?.action?.action)"
+                                        @click="resolvePendingBoardAction('pay', 'bank')"
+                                        class="min-h-11 rounded-xl bg-emerald-400 px-4 py-2 text-sm font-black text-slate-950"
+                                    >Selesaikan dari Saldo Bank</button>
+                                    <button
+                                        x-show="['pay_tax','pay_special_tax','pay_rent','card_pay_bank','card_repair_assets','card_utility_rent','card_choice_pay_or_draw'].includes(pendingBoardAction()?.action?.action)"
+                                        @click="resolvePendingBoardAction('pay', 'cash')"
+                                        class="min-h-11 rounded-xl bg-blue-400 px-4 py-2 text-sm font-black text-slate-950"
+                                    >Selesaikan dari Cash</button>
+                                    <button
+                                        x-show="pendingBoardAction()?.action?.action === 'card_choice_pay_or_draw'"
+                                        @click="resolvePendingBoardAction('draw_chance')"
+                                        class="min-h-11 rounded-xl bg-purple-400 px-4 py-2 text-sm font-black text-white"
+                                    >Ambil Kesempatan</button>
+                                </div>
                             </div>
 
                             <div class="glass-card p-5">
@@ -639,7 +673,7 @@
                                         <div class="mt-4 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
                                             <select x-model.number="quick.receiver_id" class="rounded-xl border border-white/10 bg-slate-950/50 px-3 py-2.5 outline-none focus:border-emerald-300">
                                                 <option value="">Pilih penerima</option>
-                                                <template x-for="player in current.players.filter((item) => item.id !== lastScannedPlayer()?.id && !item.is_bankrupt)" :key="player.id">
+                                                <template x-for="player in (current?.players || []).filter((item) => item.id !== lastScannedPlayer()?.id && !item.is_bankrupt)" :key="player.id">
                                                     <option :value="player.id" x-text="player.name"></option>
                                                 </template>
                                             </select>
@@ -1049,7 +1083,7 @@
                             <span class="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Pengirim</span>
                             <select x-model.number="modal.data.from_player_id" required class="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2.5 outline-none focus:border-blue-300">
                                 <option value="">Pilih pemain</option>
-                                <template x-for="player in current.players.filter((item) => !item.is_bankrupt)" :key="player.id">
+                                <template x-for="player in (current?.players || []).filter((item) => !item.is_bankrupt)" :key="player.id">
                                     <option :value="player.id" x-text="player.name"></option>
                                 </template>
                             </select>
@@ -1058,7 +1092,7 @@
                             <span class="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Penerima</span>
                             <select x-model.number="modal.data.to_player_id" required class="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2.5 outline-none focus:border-emerald-300">
                                 <option value="">Pilih pemain</option>
-                                <template x-for="player in current.players.filter((item) => !item.is_bankrupt)" :key="player.id">
+                                <template x-for="player in (current?.players || []).filter((item) => !item.is_bankrupt)" :key="player.id">
                                     <option :value="player.id" x-text="player.name"></option>
                                 </template>
                             </select>
@@ -1081,7 +1115,7 @@
                         <span class="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Pemain</span>
                         <select x-model.number="modal.data.player_id" required class="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2.5 outline-none focus:border-emerald-300">
                             <option value="">Pilih pemain</option>
-                            <template x-for="player in current.players.filter((item) => !item.is_bankrupt)" :key="player.id">
+                            <template x-for="player in (current?.players || []).filter((item) => !item.is_bankrupt)" :key="player.id">
                                 <option :value="player.id" x-text="player.name"></option>
                             </template>
                         </select>

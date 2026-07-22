@@ -120,6 +120,8 @@ window.monopolyBank = () => ({
         gameId: null,
     },
     stateRequestInFlight: false,
+    stateRefreshQueued: false,
+    automationInFlight: false,
     chartSignature: '',
     manualSelection: {
         playerId: null,
@@ -180,6 +182,7 @@ window.monopolyBank = () => ({
         this.clock = setInterval(() => {
             this.now = Date.now();
             this.checkTimerAutoFinish();
+            this.maybeRunAutomation().catch(() => {});
         }, 1000);
     },
 
@@ -323,7 +326,11 @@ window.monopolyBank = () => ({
     },
 
     async refreshState(silent = false) {
-        if (!this.current?.game?.id || this.stateRequestInFlight) {
+        if (!this.current?.game?.id) {
+            return;
+        }
+        if (this.stateRequestInFlight) {
+            this.stateRefreshQueued = true;
             return;
         }
 
@@ -333,6 +340,10 @@ window.monopolyBank = () => ({
             this.applyState(data.state, true);
         } finally {
             this.stateRequestInFlight = false;
+            if (this.stateRefreshQueued) {
+                this.stateRefreshQueued = false;
+                queueMicrotask(() => this.refreshState(true));
+            }
         }
     },
 
@@ -1114,7 +1125,11 @@ window.monopolyBank = () => ({
             return properties.filter((property) => !property.owner_id);
         }
 
-        if (['sell_property', 'add_house', 'sell_house', 'add_hotel', 'sell_hotel'].includes(type)) {
+        if (['add_house', 'sell_house', 'add_hotel', 'sell_hotel'].includes(type)) {
+            return properties.filter((property) => Number(property.owner_id) === ownerId && property.property_kind === 'land');
+        }
+
+        if (type === 'sell_property') {
             return properties.filter((property) => Number(property.owner_id) === ownerId);
         }
 
@@ -1406,6 +1421,10 @@ window.monopolyBank = () => ({
     },
 
     diceStatusText() {
+        if (this.current?.turn?.last_event?.type === 'dice_timeout_skipped') {
+            return this.current.turn.last_event.description;
+        }
+
         const roll = this.current?.turn?.last_roll;
 
         if (!roll) {
@@ -1435,6 +1454,92 @@ window.monopolyBank = () => ({
         const player = (this.current?.players || []).find((item) => item.pending_space_action);
 
         return player ? { player, action: player.pending_space_action } : null;
+    },
+
+    turnCountdownSeconds() {
+        const deadline = this.current?.turn?.deadline_at;
+        if (!deadline || this.pendingBoardAction() || this.current?.game?.status !== 'active') {
+            return null;
+        }
+
+        return Math.max(0, Math.ceil((new Date(deadline).getTime() - this.now) / 1000));
+    },
+
+    turnCountdownPercent() {
+        const remaining = this.turnCountdownSeconds();
+        const total = Number(this.current?.turn?.timeout_seconds || 20);
+
+        return remaining === null ? 0 : Math.max(0, Math.min(100, (remaining / total) * 100));
+    },
+
+    actionCountdownSeconds() {
+        const deadline = this.pendingBoardAction()?.action?.action_deadline_at;
+        if (!deadline || this.current?.game?.status !== 'active') {
+            return null;
+        }
+
+        return Math.max(0, Math.ceil((new Date(deadline).getTime() - this.now) / 1000));
+    },
+
+    actionCountdownPercent() {
+        const remaining = this.actionCountdownSeconds();
+        const total = Number(this.pendingBoardAction()?.action?.timeout_seconds || 60);
+
+        return remaining === null ? 0 : Math.max(0, Math.min(100, (remaining / total) * 100));
+    },
+
+    automationDue() {
+        if (!this.current?.game?.id || this.current.game.status !== 'active' || this.automationInFlight) {
+            return false;
+        }
+
+        const action = this.pendingBoardAction()?.action;
+        if (action?.action_deadline_at) {
+            return new Date(action.action_deadline_at).getTime() <= this.now && !action.expired_at;
+        }
+
+        const deadline = this.current?.turn?.deadline_at;
+        return Boolean(deadline && new Date(deadline).getTime() <= this.now);
+    },
+
+    async maybeRunAutomation() {
+        if (!this.automationDue()) {
+            return;
+        }
+
+        this.automationInFlight = true;
+        try {
+            const payload = await this.api(`/api/games/${this.current.game.id}/automation/tick`, {
+                method: 'POST',
+                body: JSON.stringify({}),
+                silent: true,
+            });
+            this.applyState(payload.state);
+        } finally {
+            this.automationInFlight = false;
+        }
+    },
+
+    async resolvePendingBoardAction(decision, source = 'bank') {
+        const pending = this.pendingBoardAction();
+        if (!pending || this.loading) {
+            return;
+        }
+
+        try {
+            const payload = await this.api(`/api/games/${this.current.game.id}/space-action`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    player_id: pending.player.id,
+                    decision,
+                    source,
+                }),
+            });
+            this.applyState(payload.state);
+            this.toast(payload.message, 'success');
+        } catch (error) {
+            this.toast(error.message || 'Aksi belum selesai. Periksa saldo atau aset pemain.', 'error');
+        }
     },
 
     async loadSettings() {

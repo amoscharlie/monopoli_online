@@ -120,6 +120,37 @@ class GameController extends Controller
         return $this->stateResponse($game, 'Pemain pertama berhasil ditetapkan.');
     }
 
+    public function automationTick(Game $game): JsonResponse
+    {
+        $automation = $this->bank->runAutomation($game);
+        if ($automation['changed'] ?? false) {
+            SafeBroadcast::gameUpdated($game->id);
+        }
+
+        return response()->json([
+            'automation' => $automation,
+            'state' => $this->bank->state($game->fresh()),
+        ]);
+    }
+
+    public function resolveSpaceAction(Request $request, Game $game): JsonResponse
+    {
+        $data = $request->validate([
+            'player_id' => ['required', 'integer'],
+            'decision' => ['required', 'string', 'in:buy,pay,skip,draw_chance,add_house,add_hotel,sell_house,sell_hotel'],
+            'source' => ['nullable', 'string', 'in:bank,cash'],
+        ]);
+
+        $this->bank->resolveSpaceAction(
+            $game,
+            (int) $data['player_id'],
+            $data['decision'],
+            $data['source'] ?? 'bank',
+        );
+
+        return $this->stateResponse($game, 'Aksi petak berhasil diselesaikan oleh Bank.');
+    }
+
     public function destroy(Game $game): JsonResponse
     {
         if ($game->status === 'finished') {

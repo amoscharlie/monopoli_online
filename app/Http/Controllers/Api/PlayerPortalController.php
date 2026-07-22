@@ -114,6 +114,30 @@ class PlayerPortalController extends Controller
         ]);
     }
 
+    public function bankruptcyPreview(string $token): JsonResponse
+    {
+        $accessToken = $this->accessToken($token);
+
+        return response()->json([
+            'summary' => $this->bank->bankruptcyPreview($accessToken->game, $accessToken->player_id),
+        ]);
+    }
+
+    public function bankrupt(string $token): JsonResponse
+    {
+        $accessToken = $this->accessToken($token);
+        $this->bank->bankruptPlayer($accessToken->game, $accessToken->player_id);
+        SafeBroadcast::gameUpdated($accessToken->game_id);
+        $game = $accessToken->game->fresh();
+
+        return response()->json([
+            'message' => $game->status === 'finished'
+                ? 'Kamu bangkrut. Permainan selesai karena hanya tersisa satu pemain aktif.'
+                : 'Kamu dinyatakan bangkrut dan seluruh aset sudah diselesaikan.',
+            'game_finished' => $game->status === 'finished',
+        ]);
+    }
+
     public function rollDice(string $token): JsonResponse
     {
         $accessToken = $this->accessToken($token);
@@ -146,6 +170,17 @@ class PlayerPortalController extends Controller
 
         return response()->json([
             'message' => 'Aksi petak selesai.',
+        ]);
+    }
+
+    public function useJailCard(string $token): JsonResponse
+    {
+        $accessToken = $this->accessToken($token);
+        $this->bank->useJailCard($accessToken->game, $accessToken->player_id);
+        SafeBroadcast::gameUpdated($accessToken->game_id);
+
+        return response()->json([
+            'message' => 'Kartu dipakai. Pada giliran berikutnya kamu langsung keluar dan tetap menjalankan dadu.',
         ]);
     }
 

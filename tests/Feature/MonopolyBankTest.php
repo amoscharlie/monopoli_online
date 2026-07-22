@@ -6,6 +6,7 @@ use App\Models\Game;
 use App\Models\GameCard;
 use App\Models\GameCardDraw;
 use App\Models\Property;
+use App\Services\MonopolyBankService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -875,6 +876,147 @@ class MonopolyBankTest extends TestCase
         ]);
     }
 
+    public function test_complete_group_doubles_land_house_and_hotel_rent(): void
+    {
+        $this->seed();
+        $gameId = $this->createGame(1000000);
+        $game = Game::query()->with('players', 'gameProperties.property')->findOrFail($gameId);
+        $amos = $game->players->firstWhere('name', 'Amos');
+        $budi = $game->players->firstWhere('name', 'Budi');
+        $group = $game->gameProperties->filter(fn ($item) => $item->property->group_code === 'A');
+        $target = $group->first();
+
+        foreach ($group as $property) {
+            $this->postJson("/api/games/{$gameId}/transactions/buy-property", [
+                'player_id' => $budi->id,
+                'game_property_id' => $property->id,
+            ])->assertOk();
+        }
+
+        $this->assertSame(
+            $target->property->rent * 2,
+            $this->postJson("/api/player/{$game->playerAccessTokens()->where('player_id', $amos->id)->value('token')}/rent-preview", [
+                'game_property_id' => $target->id,
+                'source' => 'bank',
+            ])->assertOk()->json('preview.amount')
+        );
+
+        $target->update(['house_count' => 4, 'has_hotel' => false]);
+        $this->assertSame(
+            $target->property->rent_4_houses * 2,
+            $this->postJson("/api/player/{$game->playerAccessTokens()->where('player_id', $amos->id)->value('token')}/rent-preview", [
+                'game_property_id' => $target->id,
+                'source' => 'bank',
+            ])->assertOk()->json('preview.amount')
+        );
+
+        $target->update(['house_count' => 0, 'has_hotel' => true]);
+        $hotelPreview = $this->postJson("/api/player/{$game->playerAccessTokens()->where('player_id', $amos->id)->value('token')}/rent-preview", [
+            'game_property_id' => $target->id,
+            'source' => 'bank',
+        ])->assertOk();
+        $this->assertSame($target->property->rent_hotel * 2, $hotelPreview->json('preview.amount'));
+        $this->assertSame(2, $hotelPreview->json('preview.multiplier'));
+    }
+
+    public function test_move_back_three_card_resolves_destination_and_chained_card(): void
+    {
+        $this->seed();
+        $gameId = $this->createGame(50000);
+        $game = Game::query()->with('players')->findOrFail($gameId);
+        $amos = $game->players->firstWhere('name', 'Amos');
+        $service = app(MonopolyBankService::class);
+
+        $service->state($game);
+
+        GameCard::query()->where('deck', 'Kesempatan')->update(['is_active' => false]);
+        GameCard::query()->where('key', 'kesempatan_mundur_tiga')->update(['is_active' => true]);
+        $amos->update(['board_position' => 22, 'pending_space_action' => null]);
+
+        $service->drawOnlineCard($game->fresh(), $amos->id, 'Kesempatan');
+
+        $amos->refresh();
+        $this->assertSame(19, (int) $amos->board_position);
+        $this->assertSame('buy_property', data_get($amos->pending_space_action, 'action'));
+        $this->assertSame('India', data_get($amos->pending_space_action, 'space_name'));
+
+        GameCardDraw::query()->where('game_id', $gameId)->delete();
+        GameCard::query()->where('deck', 'Dana Umum')->update(['is_active' => false]);
+        GameCard::query()->where('key', 'dana_dapat_komisi')->update(['is_active' => true]);
+        $amos->update([
+            'balance' => 50000,
+            'board_position' => 36,
+            'pending_space_action' => null,
+        ]);
+
+        $service->drawOnlineCard($game->fresh(), $amos->id, 'Kesempatan');
+
+        $amos->refresh();
+        $this->assertSame(33, (int) $amos->board_position);
+        $this->assertSame(55000, (int) $amos->balance);
+        $this->assertSame('dana_dapat_komisi', data_get($amos->pending_space_action, 'card.key'));
+        $this->assertDatabaseHas('game_card_draws', [
+            'game_id' => $gameId,
+            'player_id' => $amos->id,
+            'status' => 'resolved',
+        ]);
+    }
+
+    public function test_player_can_choose_bankruptcy_for_pending_rent_and_game_finishes_with_two_players(): void
+    {
+        $this->seed();
+        $gameId = $this->createGame(50000);
+        $game = Game::query()->with('players', 'gameProperties.property', 'playerAccessTokens')->findOrFail($gameId);
+        $amos = $game->players->firstWhere('name', 'Amos');
+        $budi = $game->players->firstWhere('name', 'Budi');
+        $token = $game->playerAccessTokens->firstWhere('player_id', $amos->id)->token;
+        $rentProperty = $game->gameProperties->first();
+        $amosProperty = $game->gameProperties->skip(1)->first();
+
+        $rentProperty->update(['owner_id' => $budi->id]);
+        $amosProperty->update(['owner_id' => $amos->id]);
+        $amos->update([
+            'balance' => 0,
+            'cash_balance' => 0,
+            'pending_space_action' => [
+                'action' => 'pay_rent',
+                'game_property_id' => $rentProperty->id,
+                'amount' => $rentProperty->property->rent,
+            ],
+        ]);
+        $expectedPayment = intdiv($amosProperty->property->price, 2);
+        $budiBalanceBefore = (int) $budi->balance;
+
+        $this->getJson("/api/player/{$token}/bankruptcy-preview")
+            ->assertOk()
+            ->assertJsonPath('summary.settlement.creditor_name', 'Budi')
+            ->assertJsonPath('summary.settlement.payable_to_owner', $expectedPayment);
+
+        $this->postJson("/api/player/{$token}/bankrupt")
+            ->assertOk()
+            ->assertJsonPath('game_finished', true);
+
+        $this->assertDatabaseHas('players', [
+            'id' => $amos->id,
+            'balance' => 0,
+            'cash_balance' => 0,
+            'is_bankrupt' => true,
+        ]);
+        $this->assertDatabaseHas('players', [
+            'id' => $budi->id,
+            'balance' => $budiBalanceBefore + $expectedPayment,
+        ]);
+        $this->assertDatabaseHas('game_properties', [
+            'id' => $amosProperty->id,
+            'owner_id' => null,
+        ]);
+        $this->assertDatabaseHas('games', [
+            'id' => $gameId,
+            'status' => 'finished',
+            'winner_id' => $budi->id,
+        ]);
+    }
+
     public function test_player_portal_shows_finished_game_state(): void
     {
         $this->seed();
@@ -905,6 +1047,219 @@ class MonopolyBankTest extends TestCase
             ->assertOk()
             ->assertJsonPath('state.game.id', $gameId)
             ->assertJsonCount(2, 'state.players');
+    }
+
+    public function test_space_tax_can_be_paid_from_physical_cash(): void
+    {
+        $this->seed();
+        $gameId = $this->createGame(50000, 30000);
+        $game = Game::query()->with('players', 'playerAccessTokens')->findOrFail($gameId);
+        $amos = $game->players->firstWhere('name', 'Amos');
+        $token = $game->playerAccessTokens->firstWhere('player_id', $amos->id);
+
+        $amos->update([
+            'pending_space_action' => [
+                'action' => 'pay_tax',
+                'label' => 'Bayar Pajak Jalan',
+                'amount' => 20000,
+                'requires_resolution' => true,
+                'action_deadline_at' => now()->addMinute()->toIso8601String(),
+            ],
+        ]);
+
+        $this->postJson("/api/player/{$token->token}/space-action", [
+            'decision' => 'pay',
+            'source' => 'cash',
+        ])->assertOk();
+
+        $this->assertDatabaseHas('players', [
+            'id' => $amos->id,
+            'balance' => 50000,
+            'cash_balance' => 10000,
+            'pending_space_action' => null,
+        ]);
+        $this->assertDatabaseHas('transactions', [
+            'game_id' => $gameId,
+            'type' => 'player_to_bank',
+            'from_player_id' => $amos->id,
+            'amount' => 20000,
+        ]);
+    }
+
+    public function test_property_is_bought_at_full_price_and_sold_at_half_price(): void
+    {
+        $this->seed();
+        $startingBalance = 500000;
+        $gameId = $this->createGame($startingBalance);
+        $game = Game::query()->with('players', 'gameProperties.property')->findOrFail($gameId);
+        $amos = $game->players->firstWhere('name', 'Amos');
+        $property = $game->gameProperties->first();
+
+        $this->postJson("/api/games/{$gameId}/transactions/buy-property", [
+            'player_id' => $amos->id,
+            'game_property_id' => $property->id,
+        ])->assertOk();
+
+        $this->postJson("/api/games/{$gameId}/transactions/sell-property", [
+            'player_id' => $amos->id,
+            'game_property_id' => $property->id,
+        ])->assertOk();
+
+        $this->assertDatabaseHas('players', [
+            'id' => $amos->id,
+            'balance' => $startingBalance - $property->property->price + intdiv($property->property->price, 2),
+        ]);
+    }
+
+    public function test_player_uses_jail_card_directly_without_bank_request(): void
+    {
+        $this->seed();
+        $gameId = $this->createGame(50000);
+        $game = Game::query()->with('players', 'playerAccessTokens')->findOrFail($gameId);
+        $amos = $game->players->firstWhere('name', 'Amos');
+        $token = $game->playerAccessTokens->firstWhere('player_id', $amos->id);
+        $amos->update(['is_in_jail' => true, 'jail_free_cards' => 1]);
+
+        $this->postJson("/api/player/{$token->token}/use-jail-card")
+            ->assertOk();
+
+        $this->assertDatabaseHas('players', [
+            'id' => $amos->id,
+            'is_in_jail' => true,
+            'pending_jail_release' => true,
+            'jail_free_cards' => 0,
+        ]);
+        $this->assertDatabaseCount('transaction_requests', 0);
+    }
+
+    public function test_automation_skips_unanswered_property_choice_after_sixty_seconds(): void
+    {
+        $this->seed();
+        $gameId = $this->createGame(50000);
+        $game = Game::query()->with('players')->findOrFail($gameId);
+        $amos = $game->players->firstWhere('name', 'Amos');
+        $amos->update([
+            'pending_space_action' => [
+                'action' => 'buy_property',
+                'space_name' => 'Indonesia',
+                'label' => 'Beli Indonesia',
+                'requires_resolution' => true,
+                'action_deadline_at' => now()->subSecond()->toIso8601String(),
+            ],
+        ]);
+
+        $this->postJson("/api/games/{$gameId}/automation/tick")
+            ->assertOk()
+            ->assertJsonPath('automation.event', 'action_auto_skipped');
+
+        $this->assertNull($amos->fresh()->pending_space_action);
+        $this->assertDatabaseHas('transactions', [
+            'game_id' => $gameId,
+            'type' => 'space_auto_skipped',
+            'to_player_id' => $amos->id,
+        ]);
+    }
+
+    public function test_automation_keeps_expired_payment_for_bank_help(): void
+    {
+        $this->seed();
+        $gameId = $this->createGame(50000);
+        $game = Game::query()->with('players')->findOrFail($gameId);
+        $amos = $game->players->firstWhere('name', 'Amos');
+        $amos->update([
+            'pending_space_action' => [
+                'action' => 'pay_tax',
+                'space_name' => 'Pajak Jalan',
+                'label' => 'Bayar Pajak Jalan',
+                'amount' => 20000,
+                'requires_resolution' => true,
+                'action_deadline_at' => now()->subSecond()->toIso8601String(),
+            ],
+        ]);
+
+        $this->postJson("/api/games/{$gameId}/automation/tick")
+            ->assertOk()
+            ->assertJsonPath('automation.event', 'bank_help_required');
+
+        $this->assertTrue((bool) data_get($amos->fresh()->pending_space_action, 'is_expired'));
+    }
+
+    public function test_automation_skips_turn_after_twenty_seconds_without_moving_player(): void
+    {
+        $this->seed();
+        $gameId = $this->createGame(50000);
+        $game = Game::query()->with('players')->findOrFail($gameId);
+        $amos = $game->players->firstWhere('name', 'Amos');
+        $budi = $game->players->firstWhere('name', 'Budi');
+
+        $this->postJson("/api/games/{$gameId}/first-player", [
+            'player_id' => $amos->id,
+        ])->assertOk();
+
+        $amos->update([
+            'board_position' => 14,
+            'double_streak' => 2,
+        ]);
+        $game->refresh()->update(['turn_started_at' => now()->subSeconds(19)]);
+
+        $this->postJson("/api/games/{$gameId}/automation/tick")
+            ->assertOk()
+            ->assertJsonPath('automation.event', 'waiting_dice')
+            ->assertJsonPath('state.turn.current_player_id', $amos->id)
+            ->assertJsonPath('state.turn.timeout_seconds', 20);
+
+        $game->refresh()->update(['turn_started_at' => now()->subSeconds(21)]);
+
+        $this->postJson("/api/games/{$gameId}/automation/tick")
+            ->assertOk()
+            ->assertJsonPath('automation.event', 'dice_timeout_skipped')
+            ->assertJsonPath('state.turn.current_player_id', $budi->id)
+            ->assertJsonPath('state.turn.last_event.type', 'dice_timeout_skipped')
+            ->assertJsonPath('state.turn.last_event.meta.board_position', 14)
+            ->assertJsonPath('state.turn.last_event.meta.timeout_seconds', 20);
+
+        $this->assertDatabaseMissing('dice_rolls', [
+            'game_id' => $gameId,
+            'player_id' => $amos->id,
+        ]);
+        $this->assertDatabaseHas('transactions', [
+            'game_id' => $gameId,
+            'to_player_id' => $amos->id,
+            'type' => 'dice_timeout_skipped',
+        ]);
+        $this->assertSame(14, (int) $amos->fresh()->board_position);
+        $this->assertSame(0, (int) $amos->fresh()->double_streak);
+    }
+
+    public function test_exact_start_landing_pays_ten_thousand_while_passing_pays_twenty_thousand(): void
+    {
+        $this->seed();
+        $gameId = $this->createGame(150000);
+        $game = Game::query()->with('players')->findOrFail($gameId);
+        $amos = $game->players->firstWhere('name', 'Amos');
+        $budi = $game->players->firstWhere('name', 'Budi');
+        $service = app(MonopolyBankService::class);
+        $movePlayer = new \ReflectionMethod($service, 'movePlayerByDice');
+
+        $amos->update(['board_position' => 34, 'rules_unlocked' => true]);
+        $movePlayer->invoke($service, $game, $amos->fresh(), 6);
+        $this->assertSame(160000, $amos->fresh()->balance);
+        $this->assertDatabaseHas('transactions', [
+            'game_id' => $gameId,
+            'to_player_id' => $amos->id,
+            'type' => 'start_bonus_half',
+            'amount' => 10000,
+        ]);
+
+        $budi->update(['board_position' => 34, 'rules_unlocked' => true]);
+        $movePlayer->invoke($service, $game, $budi->fresh(), 7);
+        $this->assertSame(170000, $budi->fresh()->balance);
+        $this->assertDatabaseHas('transactions', [
+            'game_id' => $gameId,
+            'to_player_id' => $budi->id,
+            'type' => 'start_bonus',
+            'amount' => 20000,
+        ]);
     }
 
     private function createGame(int $startingBalance = 15000, int $startingCash = 0): int
